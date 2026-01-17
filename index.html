@@ -3,162 +3,94 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>餐廳叫貨管理系統</title>
-    <!-- 引入 Tailwind CSS CDN -->
+    <title>餐廳叫貨管理系統 - 雲端同步版</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 引入 React 與 Babel CDN -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- 引入 Lucide 圖示庫 -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
-        body { 
-            font-family: 'Noto Sans TC', sans-serif; 
-            -webkit-tap-highlight-color: transparent;
-        }
+        body { font-family: 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .selectable-text { user-select: text !important; -webkit-user-select: text !important; }
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        /* 確保長按文字可選取 */
-        .selectable-text {
-            user-select: text !important;
-            -webkit-user-select: text !important;
-        }
     </style>
 </head>
 <body class="bg-slate-50">
     <div id="root"></div>
 
     <script type="text/babel">
+        // --- 你的 Firebase 設定 ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDS7PQrDh05bIGu9WYCcFM0s1GvhzDwz4M",
+            authDomain: "order-718b1.firebaseapp.com",
+            projectId: "order-718b1",
+            storageBucket: "order-718b1.firebasestorage.app",
+            messagingSenderId: "454465000018",
+            appId: "1:454465000018:web:ac7c787ba3e423a2a1458b",
+            // 這裡手動加入你的 Database URL
+            databaseURL: "https://order-718b1-default-rtdb.asia-southeast1.firebasedatabase.app/"
+        };
+
+        // 初始化 Firebase
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.database();
+
         const { useState, useEffect, useMemo, useRef } = React;
 
-        // 簡易 Lucide 圖示組件封裝
         const Icon = ({ name, size = 20, className = "" }) => {
-            useEffect(() => {
-                if (window.lucide) {
-                    window.lucide.createIcons({
-                        attrs: {
-                            class: className,
-                            'stroke-width': 2,
-                            width: size,
-                            height: size
-                        },
-                        nameAttr: 'data-lucide'
-                    });
-                }
-            }, [name, size, className]);
-            return <i data-lucide={name} className={className}></i>;
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name, size, className]);
+            return <i data-lucide={name} className={className} style={{width:size, height:size, display:'inline-block'}}></i>;
         };
 
         const App = () => {
             const [currentDate, setCurrentDate] = useState(new Date());
-            const [vendors, setVendors] = useState(() => {
-                const saved = localStorage.getItem('restaurant_vendors_v3');
-                return saved ? JSON.parse(saved) : [
-                    { id: 1, name: '大漢生鮮蔬果', color: 'bg-green-500', items: '青江菜 10斤\n番茄 5盒\n洋蔥 1袋', orderDays: [1, 3, 5] },
-                    { id: 2, name: '好味肉品批發', color: 'bg-red-500', items: '雞胸肉 20kg\n豬五花 10kg', orderDays: [2, 4] },
-                    { id: 3, name: '乾貨糧食行', color: 'bg-amber-500', items: '白米 2包\n大豆油 1桶', orderDays: [1] }
-                ];
-            });
-
-            const [exclusions, setExclusions] = useState(() => {
-                const saved = localStorage.getItem('restaurant_exclusions_v3');
-                return saved ? JSON.parse(saved) : [];
-            });
-
+            const [vendors, setVendors] = useState([]);
+            const [exclusions, setExclusions] = useState([]);
+            const [loading, setLoading] = useState(true);
             const [editingVendor, setEditingVendor] = useState(null);
             const [showVendorModal, setShowVendorModal] = useState(false);
             const [showBackupMenu, setShowBackupMenu] = useState(false);
-            const [viewingItemsVendor, setViewingItemsVendor] = useState(null); 
+            const [viewingItemsVendor, setViewingItemsVendor] = useState(null);
             const fileInputRef = useRef(null);
 
-            // 8 個顏色選項
             const colorOptions = [
-                { label: '藍色', value: 'bg-blue-500' },
-                { label: '紅色', value: 'bg-red-500' },
-                { label: '綠色', value: 'bg-green-500' },
-                { label: '橘色', value: 'bg-amber-500' },
-                { label: '紫色', value: 'bg-purple-500' },
-                { label: '青色', value: 'bg-cyan-500' },
-                { label: '粉色', value: 'bg-pink-500' },
-                { label: '灰色', value: 'bg-slate-500' }
+                { label: '藍色', value: 'bg-blue-500' }, { label: '紅色', value: 'bg-red-500' },
+                { label: '綠色', value: 'bg-green-500' }, { label: '橘色', value: 'bg-amber-500' },
+                { label: '紫色', value: 'bg-purple-500' }, { label: '青色', value: 'bg-cyan-500' },
+                { label: '粉色', value: 'bg-pink-500' }, { label: '灰色', value: 'bg-slate-500' }
             ];
 
+            // 1. 監聽雲端資料 (讀取)
             useEffect(() => {
-                localStorage.setItem('restaurant_vendors_v3', JSON.stringify(vendors));
-                localStorage.setItem('restaurant_exclusions_v3', JSON.stringify(exclusions));
-                if (window.lucide) window.lucide.createIcons();
-            }, [vendors, exclusions]);
+                const dataRef = db.ref('restaurant_data');
+                dataRef.on('value', (snapshot) => {
+                    const val = snapshot.val();
+                    if (val) {
+                        setVendors(val.vendors || []);
+                        setExclusions(val.exclusions || []);
+                    } else {
+                        // 初始預設資料
+                        const defaultVendors = [
+                            { id: 1, name: '大漢生鮮蔬果', color: 'bg-green-500', items: '青江菜 10斤\n番茄 5盒', orderDays: [1, 3, 5] }
+                        ];
+                        db.ref('restaurant_data').set({ vendors: defaultVendors, exclusions: [] });
+                    }
+                    setLoading(false);
+                });
+                return () => dataRef.off();
+            }, []);
 
-            const exportData = () => {
-                const dataObj = { vendors, exclusions };
-                const dataStr = JSON.stringify(dataObj, null, 2);
-                const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
-                const linkElement = document.createElement('a');
-                linkElement.setAttribute('href', dataUri);
-                linkElement.setAttribute('download', `backup_${new Date().toISOString().split('T')[0]}.json`);
-                linkElement.click();
-                setShowBackupMenu(false);
-            };
-
-            const importData = (event) => {
-                const file = event.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    try {
-                        const imported = JSON.parse(e.target.result);
-                        if (confirm('匯入將覆蓋目前的資料，確定嗎？')) {
-                            setVendors(imported.vendors || []);
-                            setExclusions(imported.exclusions || []);
-                        }
-                    } catch (err) { alert('解析失敗'); }
-                };
-                reader.readAsText(file);
-                event.target.value = null;
-                setShowBackupMenu(false);
-            };
-
-            // 計算目前日期所在的那一週 (週日到週六)
-            const weekDays = useMemo(() => {
-                const startOfWeek = new Date(currentDate);
-                startOfWeek.setDate(currentDate.getDate() - currentDate.getDay());
-                
-                const days = [];
-                for (let i = 0; i < 7; i++) {
-                    const d = new Date(startOfWeek);
-                    d.setDate(startOfWeek.getDate() + i);
-                    
-                    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                    const dayOfWeek = d.getDay();
-                    
-                    const dayEvents = vendors.flatMap(v => {
-                        const key = `${dateStr}-${v.id}`;
-                        return (v.orderDays.includes(dayOfWeek) && !exclusions.includes(key)) 
-                            ? [{ color: v.color, vendor: v.name, dateKey: key }] : [];
-                    });
-                    
-                    days.push({ 
-                        day: d.getDate(), 
-                        month: d.getMonth() + 1,
-                        dateStr: dateStr,
-                        events: dayEvents 
-                    });
-                }
-                return days;
-            }, [currentDate, vendors, exclusions]);
-
-            const handleRemoveSingleOrder = (dateKey, vendorName) => {
-                if (confirm(`取消 ${vendorName} 的叫貨？`)) {
-                    setExclusions(prev => [...prev, dateKey]);
-                }
-            };
-
-            const resetExclusions = () => {
-                if (confirm('要恢復所有手動取消的行程嗎？')) setExclusions([]);
+            // 2. 儲存至雲端 (寫入)
+            const syncToCloud = (v, e) => {
+                db.ref('restaurant_data').update({ vendors: v, exclusions: e });
             };
 
             const changeWeek = (offset) => {
@@ -167,34 +99,35 @@
                 setCurrentDate(newDate);
             };
 
+            const weekDays = useMemo(() => {
+                const startOfWeek = new Date(currentDate);
+                startOfWeek.setDate(currentDate.getDate() - currentDate.getDay());
+                const days = [];
+                for (let i = 0; i < 7; i++) {
+                    const d = new Date(startOfWeek);
+                    d.setDate(startOfWeek.getDate() + i);
+                    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    const dayEvents = (vendors || []).flatMap(v => {
+                        const key = `${dateStr}-${v.id}`;
+                        return (v.orderDays && v.orderDays.includes(d.getDay()) && !exclusions.includes(key)) 
+                            ? [{ color: v.color, vendor: v.name, dateKey: key }] : [];
+                    });
+                    days.push({ day: d.getDate(), month: d.getMonth() + 1, dateStr, events: dayEvents });
+                }
+                return days;
+            }, [currentDate, vendors, exclusions]);
+
+            if (loading) return <div className="flex h-screen items-center justify-center text-slate-400 font-bold">雲端同步中...</div>;
+
             return (
                 <div className="min-h-screen pb-10">
                     <header className="bg-white border-b sticky top-0 z-30 p-4 shadow-sm">
                         <div className="max-w-6xl mx-auto flex justify-between items-center">
-                            <div>
-                                <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                                    <Icon name="clipboard-list" className="text-blue-600" size={24} /> 叫貨系統
-                                </h1>
-                            </div>
-                            <div className="flex gap-2 relative">
-                                <button onClick={() => setShowBackupMenu(!showBackupMenu)} className="p-2 border rounded-lg bg-slate-50 text-slate-600">
-                                    <Icon name="more-horizontal" size={20} />
-                                </button>
-                                {showBackupMenu && (
-                                    <div className="absolute right-0 mt-12 w-48 bg-white border rounded-xl shadow-xl z-40 py-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                                        <button onClick={exportData} className="w-full text-left px-4 py-3 text-sm flex items-center gap-2 hover:bg-slate-50">
-                                            <Icon name="download" size={16} /> 匯出 JSON 備份
-                                        </button>
-                                        <button onClick={() => fileInputRef.current.click()} className="w-full text-left px-4 py-3 text-sm flex items-center gap-2 hover:bg-slate-50 border-t">
-                                            <Icon name="upload" size={16} /> 匯入 JSON 備份
-                                        </button>
-                                        <button onClick={resetExclusions} className="w-full text-left px-4 py-3 text-sm text-red-600 flex items-center gap-2 border-t hover:bg-red-50">
-                                            <Icon name="rotate-ccw" size={16} /> 恢復所有取消行程
-                                        </button>
-                                        <input type="file" ref={fileInputRef} onChange={importData} accept=".json" className="hidden" />
-                                    </div>
-                                )}
-                                <button onClick={() => { setEditingVendor(null); setShowVendorModal(true); }} className="bg-blue-600 text-white px-3 py-2 rounded-lg flex items-center gap-1 font-bold shadow-md active:scale-95 transition-all">
+                            <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                                <Icon name="clipboard-list" className="text-blue-600" size={24} /> 雲端叫貨系統
+                            </h1>
+                            <div className="flex gap-2">
+                                <button onClick={() => setShowVendorModal(true)} className="bg-blue-600 text-white px-3 py-2 rounded-lg flex items-center gap-1 font-bold shadow-md active:scale-95 transition-all">
                                     <Icon name="plus" size={20} /> 新增
                                 </button>
                             </div>
@@ -202,30 +135,29 @@
                     </header>
 
                     <main className="max-w-6xl mx-auto p-3 md:p-6 space-y-4">
-                        {/* 日曆區 (單週顯示) */}
+                        {/* 日曆排程 */}
                         <section className="bg-white rounded-2xl shadow-sm border overflow-hidden">
                             <div className="p-4 border-b flex items-center justify-between bg-slate-50/50">
-                                <h2 className="font-bold flex items-center gap-2"><Icon name="calendar" className="text-blue-500" /> 本週叫貨排程</h2>
-                                <div className="flex items-center gap-3">
-                                    <div className="flex border rounded-lg bg-white shadow-sm">
-                                        <button onClick={() => changeWeek(-1)} className="p-1.5 border-r active:bg-slate-100"><Icon name="chevron-left" size={18}/></button>
-                                        <button onClick={() => changeWeek(1)} className="p-1.5 active:bg-slate-100"><Icon name="chevron-right" size={18}/></button>
-                                    </div>
+                                <h2 className="font-bold flex items-center gap-2"><Icon name="calendar" className="text-blue-500" /> 本週排程</h2>
+                                <div className="flex border rounded-lg bg-white shadow-sm">
+                                    <button onClick={() => changeWeek(-1)} className="p-1.5 border-r active:bg-slate-100"><Icon name="chevron-left" size={18}/></button>
+                                    <button onClick={() => changeWeek(1)} className="p-1.5 active:bg-slate-100"><Icon name="chevron-right" size={18}/></button>
                                 </div>
                             </div>
                             <div className="grid grid-cols-7 text-center border-b bg-slate-50/30 text-[10px] font-bold text-slate-400 py-1.5">
                                 {['日', '一', '二', '三', '四', '五', '六'].map(d => <div key={d}>{d}</div>)}
                             </div>
-                            <div className="grid grid-cols-7 auto-rows-[minmax(120px,auto)]">
+                            <div className="grid grid-cols-7 auto-rows-[minmax(100px,auto)]">
                                 {weekDays.map((dayObj, i) => (
-                                    <div key={i} className={`border-r last:border-r-0 p-1 min-h-[120px] ${dayObj.dateStr === new Date().toISOString().split('T')[0] ? 'bg-blue-50/30' : ''}`}>
-                                        <div className="flex flex-col items-center">
-                                            <span className={`text-[10px] font-bold ${[0,6].includes(i%7) ? 'text-red-400' : 'text-slate-400'}`}>{dayObj.day}</span>
-                                            <span className="text-[8px] text-slate-300 scale-75 uppercase">{dayObj.month}月</span>
+                                    <div key={i} className={`border-r last:border-r-0 p-1 ${dayObj.dateStr === new Date().toISOString().split('T')[0] ? 'bg-blue-50/30' : ''}`}>
+                                        <div className="text-center mb-1">
+                                            <span className={`text-[10px] font-bold ${[0,6].includes(i) ? 'text-red-400' : 'text-slate-400'}`}>{dayObj.day}</span>
                                         </div>
-                                        <div className="mt-1 space-y-1">
+                                        <div className="space-y-1">
                                             {dayObj.events.map((ev, idx) => (
-                                                <button key={idx} onClick={() => handleRemoveSingleOrder(ev.dateKey, ev.vendor)} className={`${ev.color} w-full text-white text-[9px] py-1 px-1 rounded-md truncate shadow-sm active:opacity-70 flex items-center justify-center`}>
+                                                <button key={idx} onClick={() => {
+                                                    if(confirm(`取消 ${ev.vendor} 的叫貨？`)) syncToCloud(vendors, [...exclusions, ev.dateKey]);
+                                                }} className={`${ev.color} w-full text-white text-[9px] py-1 rounded shadow-sm active:opacity-70 truncate px-1`}>
                                                     {ev.vendor}
                                                 </button>
                                             ))}
@@ -246,80 +178,56 @@
                                             <span className="font-bold text-sm text-slate-700">{v.name}</span>
                                         </div>
                                         <div className="flex gap-2">
-                                            <button onClick={() => { setEditingVendor(v); setShowVendorModal(true); }} className="p-2 text-blue-600 active:bg-blue-50 rounded-lg"><Icon name="edit-2" size={16}/></button>
-                                            <button onClick={() => confirm('確定刪除廠商？') && setVendors(vendors.filter(x => x.id !== v.id))} className="p-2 text-red-600 active:bg-red-50 rounded-lg"><Icon name="trash-2" size={16}/></button>
+                                            <button onClick={() => { setEditingVendor(v); setShowVendorModal(true); }} className="p-2 text-blue-600"><Icon name="edit-2" size={16}/></button>
+                                            <button onClick={() => confirm('確定刪除？') && syncToCloud(vendors.filter(x => x.id !== v.id), exclusions)} className="p-2 text-red-600"><Icon name="trash-2" size={16}/></button>
                                         </div>
                                     </div>
                                 ))}
                             </div>
                         </section>
 
-                        {/* 商品內容明細 */}
+                        {/* 明細清單 */}
                         <section className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-                            <div className="p-4 border-b border-slate-100 bg-slate-50/50">
-                                <h2 className="font-bold flex items-center gap-2">
-                                    <Icon name="package" className="text-amber-500" size={20} /> 商品叫貨明細 (點擊查看內容)
-                                </h2>
-                            </div>
+                            <div className="p-4 border-b bg-slate-50/50"><h2 className="font-bold flex items-center gap-2"><Icon name="package" className="text-amber-500" /> 商品明細</h2></div>
                             <div className="p-3 grid grid-cols-1 gap-2">
-                                {vendors.map(vendor => (
-                                    <button 
-                                        key={vendor.id} 
-                                        onClick={() => setViewingItemsVendor(vendor)}
-                                        className="w-full text-left p-4 rounded-xl border border-slate-100 hover:border-blue-200 hover:bg-blue-50/30 transition-all flex items-center justify-between group"
-                                    >
+                                {vendors.map(v => (
+                                    <button key={v.id} onClick={() => setViewingItemsVendor(v)} className="w-full text-left p-4 rounded-xl border flex items-center justify-between hover:bg-blue-50/30 transition-all">
                                         <div className="flex items-center gap-3">
-                                            <div className={`w-2 h-8 rounded-full ${vendor.color}`}></div>
-                                            <div>
-                                                <div className="font-bold text-slate-800">{vendor.name}</div>
-                                                <div className="text-[10px] text-slate-400">點擊顯示品項清單</div>
-                                            </div>
+                                            <div className={`w-2 h-8 rounded-full ${v.color}`}></div>
+                                            <div className="font-bold text-slate-800">{v.name}</div>
                                         </div>
-                                        <Icon name="chevron-right" size={18} className="text-slate-300 group-hover:text-blue-400 transition-colors" />
+                                        <Icon name="chevron-right" size={18} className="text-slate-300" />
                                     </button>
                                 ))}
                             </div>
                         </section>
                     </main>
 
-                    {/* 商品明細彈窗 */}
+                    {/* 彈窗：明細查看 */}
                     {viewingItemsVendor && (
-                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-                            <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
-                                <div className="p-4 border-b flex items-center justify-between bg-slate-50/50">
-                                    <div className="flex items-center gap-2 font-bold">
-                                        <div className={`w-3 h-3 rounded-full ${viewingItemsVendor.color}`}></div>
-                                        <span>{viewingItemsVendor.name} - 明細</span>
-                                    </div>
-                                    <button onClick={() => setViewingItemsVendor(null)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-                                        <Icon name="x" size={20} />
-                                    </button>
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                            <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl">
+                                <div className="p-4 border-b flex justify-between items-center bg-slate-50">
+                                    <span className="font-bold">{viewingItemsVendor.name} - 明細</span>
+                                    <button onClick={() => setViewingItemsVendor(null)}><Icon name="x" size={20} /></button>
                                 </div>
                                 <div className="p-5">
-                                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 min-h-[200px]">
-                                        <pre className="whitespace-pre-wrap text-base text-slate-700 leading-loose selectable-text font-sans">
-                                            {viewingItemsVendor.items || "尚未設定叫貨品項"}
-                                        </pre>
+                                    <div className="bg-slate-50 p-4 rounded-xl border min-h-[150px]">
+                                        <pre className="whitespace-pre-wrap text-slate-700 selectable-text">{viewingItemsVendor.items || "無資料"}</pre>
                                     </div>
-                                    <div className="mt-4 text-center text-xs text-slate-400 italic">長按文字可選取並複製</div>
-                                    <button 
-                                        onClick={() => setViewingItemsVendor(null)}
-                                        className="w-full mt-4 py-3 bg-slate-900 text-white font-bold rounded-xl active:scale-95 transition-all shadow-lg"
-                                    >
-                                        確定
-                                    </button>
+                                    <button onClick={() => setViewingItemsVendor(null)} className="w-full mt-4 py-3 bg-slate-900 text-white font-bold rounded-xl shadow-lg">關閉</button>
                                 </div>
                             </div>
                         </div>
                     )}
 
-                    {/* 編輯廠商 Modal */}
+                    {/* 彈窗：編輯/新增 */}
                     {showVendorModal && (
-                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50">
                             <div className="bg-white rounded-t-3xl sm:rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in slide-in-from-bottom duration-300 max-h-[90vh] overflow-y-auto">
-                                <div className="flex justify-between items-center mb-6 sticky top-0 bg-white py-2">
-                                    <h3 className="text-xl font-bold">{editingVendor ? '編輯' : '新增'}廠商資料</h3>
-                                    <button onClick={() => setShowVendorModal(false)} className="p-2 bg-slate-100 rounded-full"><Icon name="x" size={20}/></button>
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-xl font-bold">{editingVendor ? '編輯' : '新增'}廠商</h3>
+                                    <button onClick={() => {setShowVendorModal(false); setEditingVendor(null);}}><Icon name="x" size={20}/></button>
                                 </div>
                                 <form onSubmit={(e) => {
                                     e.preventDefault();
@@ -331,48 +239,33 @@
                                         items: fd.get('items'),
                                         orderDays: fd.getAll('orderDays').map(Number)
                                     };
-                                    setVendors(editingVendor ? vendors.map(x => x.id === editingVendor.id ? data : x) : [...vendors, data]);
+                                    const newVendors = editingVendor ? vendors.map(x => x.id === editingVendor.id ? data : x) : [...vendors, data];
+                                    syncToCloud(newVendors, exclusions);
                                     setShowVendorModal(false);
+                                    setEditingVendor(null);
                                 }}>
                                     <div className="space-y-4">
-                                        <div>
-                                            <label className="block text-sm font-bold mb-1 text-slate-600">廠商名稱</label>
-                                            <input name="name" defaultValue={editingVendor?.name} placeholder="輸入廠商名" required className="w-full border-2 border-slate-100 p-3 rounded-xl focus:border-blue-500 outline-none" />
+                                        <input name="name" defaultValue={editingVendor?.name} placeholder="廠商名稱" required className="w-full border-2 p-3 rounded-xl outline-none focus:border-blue-500" />
+                                        <div className="grid grid-cols-4 gap-2">
+                                            {colorOptions.map(opt => (
+                                                <label key={opt.value} className="cursor-pointer">
+                                                    <input type="radio" name="color" value={opt.value} defaultChecked={editingVendor?.color === opt.value} className="peer hidden" />
+                                                    <div className={`w-full aspect-square rounded-xl ${opt.value} border-4 border-transparent peer-checked:border-white peer-checked:ring-2 peer-checked:ring-blue-500`}></div>
+                                                </label>
+                                            ))}
                                         </div>
-                                        <div>
-                                            <label className="block text-sm font-bold mb-1 text-slate-600">標記顏色 (8色可選)</label>
-                                            <div className="grid grid-cols-4 gap-2">
-                                                {colorOptions.map(option => (
-                                                    <label key={option.value} className="relative cursor-pointer">
-                                                        <input type="radio" name="color" value={option.value} defaultChecked={editingVendor?.color === option.value || (!editingVendor && option.value === 'bg-blue-500')} className="peer hidden" />
-                                                        <div className={`w-full aspect-square rounded-xl ${option.value} border-4 border-transparent peer-checked:border-white peer-checked:ring-2 peer-checked:ring-blue-500 flex items-center justify-center transition-all`}>
-                                                            <div className="hidden peer-checked:block text-white"><Icon name="check" size={16}/></div>
-                                                        </div>
-                                                        <span className="text-[10px] text-center block mt-1 text-slate-400">{option.label}</span>
-                                                    </label>
-                                                ))}
-                                            </div>
+                                        <div className="flex gap-1">
+                                            {[0,1,2,3,4,5,6].map(d => (
+                                                <label key={d} className="flex-1 cursor-pointer">
+                                                    <input type="checkbox" name="orderDays" value={d} defaultChecked={editingVendor?.orderDays.includes(d)} className="peer hidden" />
+                                                    <span className="block text-center py-2 border-2 rounded-lg text-xs font-bold peer-checked:bg-blue-600 peer-checked:text-white">
+                                                        {['日','一','二','三','四','五','六'][d]}
+                                                    </span>
+                                                </label>
+                                            ))}
                                         </div>
-                                        <div>
-                                            <label className="block text-sm font-bold mb-1 text-slate-600">叫貨週期</label>
-                                            <div className="grid grid-cols-7 gap-1">
-                                                {[0,1,2,3,4,5,6].map(d => (
-                                                    <label key={d} className="flex flex-col items-center cursor-pointer">
-                                                        <input type="checkbox" name="orderDays" value={d} defaultChecked={editingVendor?.orderDays.includes(d)} className="peer hidden" />
-                                                        <span className="w-full aspect-square border-2 rounded-lg flex items-center justify-center text-xs font-bold text-slate-400 peer-checked:bg-blue-600 peer-checked:border-blue-600 peer-checked:text-white transition-all">
-                                                            {['日','一','二','三','四','五','六'][d]}
-                                                        </span>
-                                                    </label>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-bold mb-1 text-slate-600">叫貨品項 (每行一項)</label>
-                                            <textarea name="items" defaultValue={editingVendor?.items} placeholder="例如：\n青江菜 10斤\n番茄 5盒" className="w-full border-2 border-slate-100 p-3 rounded-xl focus:border-blue-500 outline-none" rows="4"></textarea>
-                                        </div>
-                                        <div className="flex gap-3 pt-4">
-                                            <button type="submit" className="flex-1 py-4 bg-blue-600 text-white rounded-xl font-bold shadow-lg shadow-blue-100 active:scale-95 transition-all">儲存設定</button>
-                                        </div>
+                                        <textarea name="items" defaultValue={editingVendor?.items} placeholder="品項清單" className="w-full border-2 p-3 rounded-xl outline-none focus:border-blue-500" rows="4"></textarea>
+                                        <button type="submit" className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold shadow-lg">儲存並同步</button>
                                     </div>
                                 </form>
                             </div>
