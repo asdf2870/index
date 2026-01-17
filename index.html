@@ -1,0 +1,388 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { 
+  Calendar, 
+  ChevronLeft, 
+  ChevronRight, 
+  Plus, 
+  ClipboardList, 
+  Trash2, 
+  Edit2, 
+  Save,
+  Package,
+  Clock,
+  Settings,
+  Download,
+  Upload,
+  FileJson
+} from 'lucide-react';
+
+const App = () => {
+  // --- 狀態管理 ---
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [vendors, setVendors] = useState(() => {
+    // 從 localStorage 讀取初始資料
+    const saved = localStorage.getItem('restaurant_vendors_v2');
+    return saved ? JSON.parse(saved) : [
+      { id: 1, name: '大漢生鮮蔬果', color: 'bg-green-500', items: '青江菜, 番茄, 洋蔥', orderDays: [1, 3, 5] },
+      { id: 2, name: '好味肉品批發', color: 'bg-red-500', items: '雞胸肉, 豬五花', orderDays: [2, 4] },
+      { id: 3, name: '乾貨糧食行', color: 'bg-amber-500', items: '白米, 調味料, 罐頭', orderDays: [1] }
+    ];
+  });
+  
+  const [editingVendor, setEditingVendor] = useState(null);
+  const [showVendorModal, setShowVendorModal] = useState(false);
+  const [showBackupMenu, setShowBackupMenu] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // 當 vendors 改變時，自動儲存到 localStorage
+  useEffect(() => {
+    localStorage.setItem('restaurant_vendors_v2', JSON.stringify(vendors));
+  }, [vendors]);
+
+  // --- 匯出功能 ---
+  const exportData = () => {
+    const dataStr = JSON.stringify(vendors, null, 2);
+    const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
+    
+    const exportFileDefaultName = `restaurant_orders_backup_${new Date().toISOString().split('T')[0]}.json`;
+    
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
+    setShowBackupMenu(false);
+  };
+
+  // --- 匯入功能 ---
+  const importData = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const importedVendors = JSON.parse(e.target.result);
+        if (Array.isArray(importedVendors)) {
+          if (confirm('匯入將會覆蓋目前的資料，確定要繼續嗎？')) {
+            setVendors(importedVendors);
+            alert('資料匯入成功！');
+          }
+        } else {
+          alert('無效的檔案格式。');
+        }
+      } catch (err) {
+        alert('解析檔案失敗，請確保這是正確的 JSON 備份檔。');
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = null; // 重置 input
+    setShowBackupMenu(false);
+  };
+
+  // --- 日曆邏輯 ---
+  const daysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
+  const firstDayOfMonth = (year, month) => new Date(year, month, 1).getDay();
+
+  const calendarDays = useMemo(() => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const totalDays = daysInMonth(year, month);
+    const firstDay = firstDayOfMonth(year, month);
+    const days = [];
+
+    for (let i = 0; i < firstDay; i++) {
+      days.push(null);
+    }
+
+    for (let d = 1; d <= totalDays; d++) {
+      const dayOfWeek = (firstDay + d - 1) % 7;
+      const dayEvents = vendors.flatMap(v => {
+        const events = [];
+        if (v.orderDays.includes(dayOfWeek)) {
+          events.push({ type: 'order', color: v.color, vendor: v.name });
+        }
+        return events;
+      });
+      days.push({ day: d, events: dayEvents });
+    }
+    return days;
+  }, [currentDate, vendors]);
+
+  const changeMonth = (offset) => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + offset, 1));
+  };
+
+  // --- 廠商操作 ---
+  const handleUpdateItems = (id, newItems) => {
+    setVendors(vendors.map(v => v.id === id ? { ...v, items: newItems } : v));
+  };
+
+  const handleAddOrEditVendor = (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const vendorData = {
+      id: editingVendor ? editingVendor.id : Date.now(),
+      name: formData.get('name'),
+      color: formData.get('color'),
+      items: formData.get('items'),
+      orderDays: formData.getAll('orderDays').map(Number),
+    };
+
+    if (editingVendor) {
+      setVendors(vendors.map(v => v.id === editingVendor.id ? vendorData : v));
+    } else {
+      setVendors([...vendors, vendorData]);
+    }
+    setShowVendorModal(false);
+    setEditingVendor(null);
+  };
+
+  const deleteVendor = (id) => {
+    if (confirm('確定要刪除這家廠商嗎？')) {
+      setVendors(vendors.filter(v => v.id !== id));
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
+      <header className="max-w-6xl mx-auto mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-2">
+            <ClipboardList className="text-blue-600" /> 餐廳叫貨管理系統
+          </h1>
+          <p className="text-slate-500">資料已同步至瀏覽器，支援手動匯出備份</p>
+        </div>
+        
+        <div className="flex gap-2 relative">
+          {/* 備份按鈕 */}
+          <div className="relative">
+            <button 
+              onClick={() => setShowBackupMenu(!showBackupMenu)}
+              className="bg-white border border-slate-200 text-slate-600 px-4 py-2 rounded-lg flex items-center gap-2 transition hover:bg-slate-50 shadow-sm"
+            >
+              <FileJson size={18} /> 備份管理
+            </button>
+            
+            {showBackupMenu && (
+              <div className="absolute right-0 mt-2 w-48 bg-white border rounded-xl shadow-xl z-20 py-2">
+                <button 
+                  onClick={exportData}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2"
+                >
+                  <Download size={16} /> 匯出資料 (.json)
+                </button>
+                <button 
+                  onClick={() => fileInputRef.current.click()}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 border-t"
+                >
+                  <Upload size={16} /> 匯入資料檔
+                </button>
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={importData} 
+                  accept=".json" 
+                  className="hidden" 
+                />
+              </div>
+            )}
+          </div>
+
+          <button 
+            onClick={() => { setEditingVendor(null); setShowVendorModal(true); }}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition shadow-md"
+          >
+            <Plus size={20} /> 新增廠商
+          </button>
+        </div>
+      </header>
+
+      <main className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        {/* 左側：日曆看板 */}
+        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <h2 className="text-xl font-semibold flex items-center gap-2">
+              <Calendar className="text-blue-500" /> 叫貨排程
+            </h2>
+            <div className="flex items-center gap-4">
+              <span className="font-medium text-lg">
+                {currentDate.getFullYear()}年 {currentDate.getMonth() + 1}月
+              </span>
+              <div className="flex border rounded-lg bg-white">
+                <button onClick={() => changeMonth(-1)} className="p-2 hover:bg-slate-50 border-r"><ChevronLeft size={20}/></button>
+                <button onClick={() => changeMonth(1)} className="p-2 hover:bg-slate-50"><ChevronRight size={20}/></button>
+              </div>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-7 text-center border-b bg-slate-50/30">
+            {['日', '一', '二', '三', '四', '五', '六'].map(d => (
+              <div key={d} className="py-3 text-sm font-bold text-slate-400 uppercase tracking-wider">{d}</div>
+            ))}
+          </div>
+          
+          <div className="grid grid-cols-7 auto-rows-[120px]">
+            {calendarDays.map((dayObj, i) => (
+              <div key={i} className={`border-r border-b p-2 transition-colors ${!dayObj ? 'bg-slate-50/50' : 'hover:bg-blue-50/30'}`}>
+                {dayObj && (
+                  <>
+                    <span className="text-sm font-semibold text-slate-600">{dayObj.day}</span>
+                    <div className="mt-1 space-y-1 overflow-y-auto max-h-[85px] scrollbar-hide">
+                      {dayObj.events.map((ev, idx) => (
+                        <div key={idx} className={`${ev.color} text-white text-[10px] px-1.5 py-1 rounded flex items-center gap-1 shadow-sm truncate`}>
+                          <Clock size={10}/>
+                          <span className="font-medium">叫貨</span>
+                          <span>{ev.vendor}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 右側：廠商列表 */}
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+              <Settings className="text-slate-400" size={20}/> 廠商設定概覽
+            </h3>
+            <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+              {vendors.length === 0 && <p className="text-center text-slate-400 py-8 text-sm">尚未加入廠商</p>}
+              {vendors.map(vendor => (
+                <div key={vendor.id} className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 group">
+                  <div className="flex justify-between items-start mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-3 h-3 rounded-full ${vendor.color}`}></div>
+                      <span className="font-bold">{vendor.name}</span>
+                    </div>
+                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => { setEditingVendor(vendor); setShowVendorModal(true); }} className="text-blue-500 hover:bg-blue-50 p-1 rounded"><Edit2 size={14}/></button>
+                      <button onClick={() => deleteVendor(vendor.id)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={14}/></button>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    <p>週期：每週 {vendor.orderDays.length > 0 ? vendor.orderDays.map(d => ['日','一','二','三','四','五','六'][d]).join(', ') : '未設定'}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* 下方：商品清單編輯區 */}
+        <div className="lg:col-span-3 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+            <h2 className="text-xl font-semibold flex items-center gap-2">
+              <Package className="text-amber-500" /> 商品內容明細 (點擊文字直接編輯)
+            </h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-slate-50 text-slate-500 text-sm uppercase">
+                <tr>
+                  <th className="px-6 py-4 font-semibold w-1/4">廠商名稱</th>
+                  <th className="px-6 py-4 font-semibold">固定品項 / 規格</th>
+                  <th className="px-6 py-4 font-semibold text-right w-40">資料狀態</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {vendors.map(vendor => (
+                  <tr key={vendor.id} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-2 h-10 rounded-full ${vendor.color}`}></div>
+                        <span className="font-bold text-slate-700">{vendor.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <textarea
+                        value={vendor.items}
+                        onChange={(e) => handleUpdateItems(vendor.id, e.target.value)}
+                        className="w-full bg-transparent border-none focus:ring-2 focus:ring-blue-100 rounded p-2 text-slate-600 resize-none hover:bg-white transition-all"
+                        rows="2"
+                        placeholder="請輸入商品明細與規格..."
+                      />
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <span className="text-[10px] text-slate-400 font-mono bg-slate-100 px-2 py-1 rounded">
+                        ID: {String(vendor.id).slice(-6)} | 已儲存
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+
+      {/* 新增/編輯 廠商 Modal */}
+      {showVendorModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b bg-slate-50 flex justify-between items-center">
+              <h3 className="text-xl font-bold">{editingVendor ? '編輯廠商' : '新增廠商'}</h3>
+              <button onClick={() => setShowVendorModal(false)} className="text-slate-400 hover:text-slate-600 transition-colors text-xl">✕</button>
+            </div>
+            <form onSubmit={handleAddOrEditVendor} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="block text-sm font-bold mb-1 text-slate-600">廠商名稱</label>
+                  <input required name="name" defaultValue={editingVendor?.name} placeholder="例如：大漢生鮮" className="w-full border rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
+                </div>
+                <div className="col-span-1">
+                  <label className="block text-sm font-bold mb-1 text-slate-600">代表顏色</label>
+                  <select name="color" defaultValue={editingVendor?.color || 'bg-blue-500'} className="w-full border rounded-lg p-2 bg-white">
+                    <option value="bg-blue-500">藍色</option>
+                    <option value="bg-red-500">紅色</option>
+                    <option value="bg-green-500">綠色</option>
+                    <option value="bg-amber-500">橘色</option>
+                    <option value="bg-purple-500">紫色</option>
+                    <option value="bg-pink-500">粉色</option>
+                    <option value="bg-slate-700">深灰</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold mb-2 text-slate-600">叫貨週期 (每週幾勾選)</label>
+                <div className="flex justify-between gap-1 bg-slate-50 p-3 rounded-xl border border-dashed">
+                  {[0,1,2,3,4,5,6].map(d => (
+                    <label key={d} className="flex flex-col items-center cursor-pointer group">
+                      <input 
+                        type="checkbox" 
+                        name="orderDays" 
+                        value={d} 
+                        defaultChecked={editingVendor?.orderDays.includes(d)}
+                        className="peer hidden" 
+                      />
+                      <span className="w-10 h-10 rounded-full border border-slate-200 bg-white flex items-center justify-center text-sm peer-checked:bg-blue-600 peer-checked:border-blue-600 peer-checked:text-white transition-all group-hover:border-blue-300 shadow-sm">
+                        {['日','一','二','三','四','五','六'][d]}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold mb-1 text-slate-600">商品預設內容</label>
+                <textarea name="items" defaultValue={editingVendor?.items} className="w-full border rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" rows="3" placeholder="輸入商品項目..."></textarea>
+              </div>
+
+              <div className="pt-4 flex gap-3">
+                <button type="button" onClick={() => setShowVendorModal(false)} className="flex-1 py-3 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors font-medium">取消</button>
+                <button type="submit" className="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-lg shadow-blue-200 transition-all active:scale-95">儲存並應用</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default App;
