@@ -135,7 +135,7 @@
 
             const copyOrder = () => {
                 const label = dayType === 'weekday' ? '平日' : '假日';
-                const summary = orderList.map(i => `${i.name}: 補 ${i.need} ${i.unit}`).join('\n');
+                const summary = orderList.map(i => `${i.name}:  ${i.need} ${i.unit}`).join('\n');
                 const text = summary ? `【${label}補貨清單】\n${summary}` : "無需補貨";
                 
                 const textArea = document.createElement("textarea");
