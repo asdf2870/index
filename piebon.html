@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>嗯雞刀忠孝排班</title>
+    <title>智慧排班系統 - 雲端專業版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -209,3 +209,70 @@
                                         </div>
                                     </div>
                                 ))}
+                            </div>
+                        )}
+
+                        {view === 'staff-manage' && (
+                            <div className="max-w-xl mx-auto space-y-3">
+                                <button onClick={() => sync([...staff, { id: Date.now().toString(), name: '新人員', order: staff.length + 1, shifts: ['morning','evening'] }], unavail, schedules)} className="w-full p-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 flex items-center justify-center gap-2">
+                                    <Icon name="user-plus" /> 新增排班人員
+                                </button>
+                                {staff.map(s => (
+                                    <div key={s.id} className="bg-white p-4 rounded-2xl border flex items-center gap-3">
+                                        <input className="w-10 p-1 border rounded bg-slate-50 text-center font-black" value={s.order} onChange={(e) => sync(staff.map(x=>x.id===s.id?{...x, order:parseInt(e.target.value)}:x), unavail, schedules)} />
+                                        <input className="flex-1 font-black bg-transparent outline-none border-b focus:border-indigo-500" value={s.name} onChange={(e) => sync(staff.map(x=>x.id===s.id?{...x, name:e.target.value}:x), unavail, schedules)} />
+                                        <button onClick={() => sync(staff.filter(x=>x.id!==s.id), unavail, schedules)} className="text-rose-400 p-2"><Icon name="trash-2" size={18}/></button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </main>
+
+                    {/* 排班彈窗 */}
+                    {activePop && (
+                        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
+                            <div className="bg-white rounded-[2rem] w-full max-w-xs p-6">
+                                <h3 className="text-center font-black mb-4">設定排班 ({activePop.day}日)</h3>
+                                <div className="grid grid-cols-2 gap-2 mb-4">
+                                    {['08-16', '10-17', '12-20', '16-23', '17-23', '23-05'].map(t => (
+                                        <button key={t} onClick={() => {
+                                            const newSched = {...schedules, [`${activePop.staffId}-${activePop.day}`]: t};
+                                            sync(staff, unavail, newSched);
+                                            setActivePop(null);
+                                        }} className="p-2 bg-slate-100 rounded-xl font-bold text-xs hover:bg-indigo-500 hover:text-white transition">{t}</button>
+                                    ))}
+                                </div>
+                                <button onClick={() => {
+                                    const newSched = {...schedules}; delete newSched[`${activePop.staffId}-${activePop.day}`];
+                                    sync(staff, unavail, newSched); setActivePop(null);
+                                }} className="w-full p-2 text-rose-500 font-black text-xs mb-2">清除班表</button>
+                                <button onClick={() => setActivePop(null)} className="w-full p-2 text-slate-400 font-black text-xs">取消</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 密碼驗證 */}
+                    {showAuthModal && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[200] flex items-center justify-center p-6">
+                            <div className="bg-white rounded-[2.5rem] w-full max-w-sm p-8 text-center shadow-2xl">
+                                <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 mx-auto mb-6">
+                                    <Icon name="shield-check" size={32}/>
+                                </div>
+                                <h3 className="text-xl font-black mb-6">管理員驗證</h3>
+                                <input type="password" autoFocus className="w-full bg-slate-100 rounded-2xl p-4 text-center text-3xl font-black outline-none border-2 focus:border-indigo-500 mb-6" value={authInput} onChange={(e)=>setAuthInput(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && (authInput===PASSCODE ? (setIsAdminAuthenticated(true), setShowAuthModal(false), setAuthInput("")) : alert("密碼錯誤"))} />
+                                <div className="flex gap-2">
+                                    <button onClick={()=>setShowAuthModal(false)} className="flex-1 py-4 font-black text-slate-400">取消</button>
+                                    <button onClick={()=>{ if(authInput===PASSCODE){setIsAdminAuthenticated(true); setShowAuthModal(false); setAuthInput("");}else{alert("密碼錯誤");} }} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg">進入</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
