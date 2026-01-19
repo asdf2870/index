@@ -3,25 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>智慧排班系統 - 雲端專業版</title>
+    <title>智慧排班系統 - 專業管理版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
-
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
-        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f8fafc; overflow-x: hidden; }
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f1f5f9; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
-        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
         .schedule-cell { height: 40px; min-width: 55px; width: 5.8vw; }
-        .conflict-pulse { border: 2px solid #ef4444; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+        input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .anim-pulse-custom { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
     </style>
 </head>
 <body>
@@ -30,83 +28,61 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
-        // --- Firebase 配置 ---
-        const firebaseConfig = {
-            apiKey: "AIzaSyDS7PQrDh05bIGu9WYCcFM0s1GvhzDwz4M",
-            authDomain: "order-718b1.firebaseapp.com",
-            projectId: "order-718b1",
-            storageBucket: "order-718b1.firebasestorage.app",
-            messagingSenderId: "454465000018",
-            appId: "1:454465000018:web:ac7c787ba3e423a2a1458b",
-            databaseURL: "https://order-718b1-default-rtdb.asia-southeast1.firebasedatabase.app/"
-        };
-
-        // 初始化 Firebase
-        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-        const db = firebase.database();
-
         const PASSCODE = "0418";
 
-        const Icon = ({ name, size = 20, className = "" }) => {
+        const LucideIcon = ({ name, size = 20, className = "" }) => {
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
             return <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
         };
 
         const App = () => {
+            // --- 全域狀態 ---
             const [view, setView] = useState('user-unavail'); 
             const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
-            const [showAuthModal, setShowAuthModal] = useState(false);
-            const [authCallback, setAuthCallback] = useState(null); 
-            const [authInput, setAuthInput] = useState("");
-            const [loading, setLoading] = useState(true);
-
+            const [authModal, setAuthModal] = useState({ show: false, callback: null, value: "" });
+            
             const [currentDate, setCurrentDate] = useState(new Date());
             const [isUnavailLocked, setIsUnavailLocked] = useState(false);
             const [isScheduleLocked, setIsScheduleLocked] = useState(false);
             const [hideUnavailMarker, setHideUnavailMarker] = useState(false);
             const [customRedDays, setCustomRedDays] = useState({});
 
-            const [staff, setStaff] = useState([]);
-            const [unavail, setUnavail] = useState({});
-            const [schedules, setSchedules] = useState({});
-            const [activePop, setActivePop] = useState(null);
+            const [staff, setStaff] = useState(() => JSON.parse(localStorage.getItem('shift_staff')) || [
+                { id: '1', name: '王小明', type: 'full-time', shifts: ['morning', 'evening'], note: '', order: 1 }
+            ]);
+            const [unavail, setUnavail] = useState(() => JSON.parse(localStorage.getItem('shift_unavail')) || {});
+            const [schedules, setSchedules] = useState(() => JSON.parse(localStorage.getItem('shift_schedules')) || {});
 
-            // --- 雲端監聽 ---
+            const [popover, setPopover] = useState(null); 
+
+            // --- 持久化儲存 ---
             useEffect(() => {
-                const dataRef = db.ref('v3_smart_shift');
-                dataRef.on('value', (snapshot) => {
-                    const data = snapshot.val();
-                    if (data) {
-                        setStaff(data.staff || []);
-                        setUnavail(data.unavail || {});
-                        setSchedules(data.schedules || {});
-                        setIsUnavailLocked(!!data.isUnavailLocked);
-                        setIsScheduleLocked(!!data.isScheduleLocked);
-                        setCustomRedDays(data.customRedDays || {});
-                    }
-                    setLoading(false);
-                });
-                return () => dataRef.off();
-            }, []);
+                localStorage.setItem('shift_staff', JSON.stringify(staff));
+                localStorage.setItem('shift_unavail', JSON.stringify(unavail));
+                localStorage.setItem('shift_schedules', JSON.stringify(schedules));
+            }, [staff, unavail, schedules]);
 
-            // --- 雲端更新 ---
-            const sync = (updates) => {
-                db.ref('v3_smart_shift').update(updates);
-            };
-
+            // --- 密碼驗證邏輯 ---
             const triggerAuth = (successCallback) => {
-                if (isAdminAuthenticated) { successCallback(); } 
-                else { setAuthCallback(() => successCallback); setShowAuthModal(true); setAuthInput(""); }
+                if (isAdminAuthenticated) {
+                    successCallback();
+                } else {
+                    setAuthModal({ show: true, callback: successCallback, value: "" });
+                }
             };
 
             const handleAuthSubmit = () => {
-                if (authInput === PASSCODE) {
+                if (authModal.value === PASSCODE) {
                     setIsAdminAuthenticated(true);
-                    setShowAuthModal(false);
-                    if (authCallback) authCallback();
-                } else { alert("密碼錯誤！"); setAuthInput(""); }
+                    setAuthModal({ ...authModal, show: false });
+                    if (authModal.callback) authModal.callback();
+                } else {
+                    alert("密碼錯誤，請重新輸入");
+                    setAuthModal({ ...authModal, value: "" });
+                }
             };
 
+            // --- 日期計算 ---
             const year = currentDate.getFullYear();
             const month = currentDate.getMonth();
             const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -114,37 +90,44 @@
             const adjustedStartDay = startDay === 0 ? 6 : startDay - 1; 
             const dates = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
-            const isRedDate = (d) => {
+            const isDayRed = (d) => {
                 const dayOfWeek = new Date(year, month, d).getDay();
                 const key = `${year}-${month + 1}-${d}`;
-                return customRedDays[key] || dayOfWeek === 0 || dayOfWeek === 6; 
+                return customRedDays[key] || dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6; 
             };
 
+            // --- 排班時間解析與偵測 ---
             const parseTime = (str) => {
                 if (!str || typeof str !== 'string') return null;
                 const match = str.match(/(\d+)-(\d+)/);
-                return match ? { start: parseInt(match[1]), end: parseInt(match[2]) } : null;
+                if (!match) return null;
+                return { start: parseInt(match[1]), end: parseInt(match[2]) };
             };
 
             const getShiftColor = (timeStr) => {
-                const t = parseTime(timeStr);
-                if (!t) return "transparent";
-                if (t.start >= 8 && t.start < 16) return "rgba(250, 204, 21, 0.7)"; 
-                if (t.start >= 16 && t.start < 23) return "rgba(244, 114, 182, 0.7)"; 
+                const time = parseTime(timeStr);
+                if (!time) return "transparent";
+                const { start } = time;
+                if (start >= 8 && start < 16) return "rgba(250, 204, 21, 0.7)"; 
+                if (start >= 16 && start < 23) return "rgba(244, 114, 182, 0.7)"; 
                 return "rgba(59, 130, 246, 0.7)"; 
             };
 
+            // --- 工時統計 ---
             const stats = useMemo(() => {
                 const res = {};
                 staff.forEach(s => {
                     let hours = 0; let days = 0;
                     dates.forEach(d => {
                         const shift = schedules[`${s.id}-${d}`];
-                        const t = parseTime(shift);
-                        if (t) {
-                            let diff = t.end - t.start;
-                            if (diff <= 0) diff += 24;
-                            hours += diff; days++;
+                        if (shift) {
+                            const t = parseTime(shift);
+                            if (t) {
+                                let diff = t.end - t.start;
+                                if (diff <= 0) diff += 24;
+                                hours += diff;
+                                days++;
+                            }
                         }
                     });
                     res[s.id] = { hours, days };
@@ -152,90 +135,150 @@
                 return res;
             }, [schedules, staff, dates]);
 
-            const exportTable = () => {
-                const el = document.getElementById('export-area');
+            // --- 導出截圖 ---
+            const handleExport = () => {
+                const el = document.getElementById('table-to-export');
                 html2canvas(el, { scale: 2 }).then(canvas => {
                     const link = document.createElement('a');
-                    link.download = `排班表_${year}_${month + 1}.png`;
+                    link.download = `班表_${year}_${month + 1}.png`;
                     link.href = canvas.toDataURL("image/png");
                     link.click();
                 });
             };
 
-            if (loading) return <div className="h-screen flex items-center justify-center font-black text-slate-400">同步雲端資料中...</div>;
-
             return (
-                <div className="min-h-screen flex flex-col max-w-[100vw]">
-                    <header className="bg-white px-4 py-3 border-b flex justify-between items-center sticky top-0 z-[60] shadow-sm">
-                        <div className="flex items-center gap-4">
-                            <h1 className="text-xl font-black text-slate-800 flex items-center gap-1">
-                                <Icon name="calendar-check" className="text-indigo-600" /> 智慧排班
+                <div className="min-h-screen flex flex-col select-none">
+                    {/* Header */}
+                    <header className="bg-white border-b sticky top-0 z-[60] px-4 py-3 flex justify-between items-center shadow-sm">
+                        <div className="flex items-center gap-6">
+                            <h1 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                                <LucideIcon name="calendar-days" className="text-indigo-600" />
+                                智慧排班
                             </h1>
-                            <nav className="flex bg-slate-100 p-1 rounded-xl">
-                                <button onClick={() => setView('user-unavail')} className={`px-4 py-1.5 rounded-lg text-sm font-bold transition ${view === 'user-unavail' ? 'bg-white shadow text-indigo-600' : 'text-slate-500'}`}>畫休</button>
-                                <button onClick={() => triggerAuth(() => setView('admin-schedule'))} className={`px-4 py-1.5 rounded-lg text-sm font-bold transition ${view === 'admin-schedule' ? 'bg-white shadow text-indigo-600' : 'text-slate-500'}`}>排班</button>
-                                <button onClick={() => triggerAuth(() => setView('staff-manage'))} className={`px-4 py-1.5 rounded-lg text-sm font-bold transition ${view === 'staff-manage' ? 'bg-white shadow text-indigo-600' : 'text-slate-500'}`}>人員</button>
-                            </nav>
+                            <div className="flex bg-slate-100 p-1 rounded-xl">
+                                <button onClick={() => setView('user-unavail')} className={`px-5 py-2 rounded-lg text-sm font-black transition-all ${view === 'user-unavail' ? 'bg-white shadow-md text-indigo-600' : 'text-slate-500 hover:text-slate-800'}`}>畫休模式</button>
+                                <button onClick={() => triggerAuth(() => setView('admin-schedule'))} className={`px-5 py-2 rounded-lg text-sm font-black transition-all ${view === 'admin-schedule' ? 'bg-white shadow-md text-indigo-600' : 'text-slate-500 hover:text-slate-800'}`}>排班管理</button>
+                                <button onClick={() => triggerAuth(() => setView('staff-manage'))} className={`px-5 py-2 rounded-lg text-sm font-black transition-all ${view === 'staff-manage' ? 'bg-white shadow-md text-indigo-600' : 'text-slate-500 hover:text-slate-800'}`}>人員名單</button>
+                            </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                            <span className="font-black text-slate-700 text-sm hidden sm:block">{year} / {month + 1}月</span>
-                            {isAdminAuthenticated && <button onClick={() => setIsAdminAuthenticated(false)} className="text-rose-500 p-2 rounded-lg hover:bg-rose-50"><Icon name="log-out" size={18}/></button>}
+
+                        <div className="flex items-center gap-4">
+                            <div className="flex items-center bg-slate-100 rounded-xl px-2 py-1 gap-2 border">
+                                <button onClick={() => setCurrentDate(new Date(year, month - 1))} className="p-1 hover:bg-white rounded-lg shadow-sm transition"><LucideIcon name="chevron-left" size={16}/></button>
+                                <span className="font-black text-slate-700 text-sm px-2">{year}年 {month + 1}月</span>
+                                <button onClick={() => setCurrentDate(new Date(year, month + 1))} className="p-1 hover:bg-white rounded-lg shadow-sm transition"><LucideIcon name="chevron-right" size={16}/></button>
+                            </div>
+                            {isAdminAuthenticated && (
+                                <button onClick={() => setIsAdminAuthenticated(false)} className="text-rose-500 p-2 rounded-xl hover:bg-rose-50 border border-transparent hover:border-rose-100 transition">
+                                    <LucideIcon name="log-out" size={18}/>
+                                </button>
+                            )}
                         </div>
                     </header>
 
-                    <main className="flex-1 p-4 overflow-x-hidden">
-                        {view === 'admin-schedule' && (
-                            <div className="mb-4 flex gap-3 overflow-x-auto no-scrollbar">
-                                {staff.sort((a,b)=>a.order-b.order).map(s => (
-                                    <div key={s.id} className="bg-white border rounded-2xl px-4 py-2 shadow-sm min-w-[100px]">
-                                        <div className="text-[10px] font-black text-slate-400 truncate">{s.name}</div>
-                                        <div className="flex justify-between items-end">
-                                            <span className="text-lg font-black text-indigo-600">{stats[s.id]?.hours}h</span>
-                                            <span className="text-[10px] font-bold text-slate-400">{stats[s.id]?.days}d</span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
+                    <main className="flex-1 p-4 md:p-6 pb-24">
+                        {/* 人員名單 */}
                         {view === 'staff-manage' && (
                             <div className="max-w-4xl mx-auto space-y-4">
-                                <button onClick={() => sync({ staff: [...staff, { id: Date.now().toString(), name: '新人員', type: 'part-time', shifts: [], order: staff.length + 1 }] })} className="w-full bg-indigo-600 text-white p-3 rounded-xl font-bold flex justify-center items-center gap-2">
-                                    <Icon name="plus" size={18}/> 新增人員
-                                </button>
-                                {staff.sort((a,b)=>a.order-b.order).map(s => (
-                                    <div key={s.id} className="bg-white rounded-2xl p-4 border shadow-sm flex flex-wrap items-center gap-4">
-                                        <input type="number" className="w-12 bg-slate-50 border rounded-lg p-1.5 text-center font-black" value={s.order} onChange={(e)=>sync({ staff: staff.map(st=>st.id===s.id?{...st, order: parseInt(e.target.value)||0}:st) })}/>
-                                        <input className="font-black bg-transparent border-b-2 w-24" value={s.name} onChange={(e)=>sync({ staff: staff.map(st=>st.id===s.id?{...st, name: e.target.value}:st) })}/>
-                                        <button onClick={()=>sync({ staff: staff.filter(st=>st.id!==s.id) })} className="ml-auto text-rose-300 hover:text-rose-500"><Icon name="trash-2" size={18}/></button>
-                                    </div>
-                                ))}
+                                <div className="flex justify-between items-center">
+                                    <h2 className="text-2xl font-black text-slate-800">人員名單管理</h2>
+                                    <button onClick={() => setStaff([...staff, { id: Date.now().toString(), name: '新人員', type: 'part-time', shifts: [], note: '', order: staff.length + 1 }])} className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-black flex items-center gap-2 shadow-lg shadow-indigo-200 active:scale-95 transition">
+                                        <LucideIcon name="plus" size={18}/> 新增人員
+                                    </button>
+                                </div>
+                                <div className="grid gap-3">
+                                    {staff.sort((a,b)=>a.order-b.order).map(s => (
+                                        <div key={s.id} className="bg-white rounded-3xl p-5 border shadow-sm flex flex-wrap items-center gap-6 animate-in fade-in slide-in-from-bottom-2">
+                                            <input type="number" className="w-12 bg-slate-50 border-2 rounded-xl p-2 text-center font-black text-sm outline-none focus:border-indigo-400" value={s.order} onChange={(e)=>setStaff(staff.map(st=>st.id===s.id?{...st, order: parseInt(e.target.value)||0}:st))}/>
+                                            <div className="flex flex-col">
+                                                <input className="font-black bg-transparent border-b-2 border-slate-200 outline-none w-28 text-lg focus:border-indigo-500 transition" value={s.name} onChange={(e)=>setStaff(staff.map(st=>st.id===s.id?{...st, name: e.target.value}:st))}/>
+                                            </div>
+                                            <div className="flex bg-slate-100 p-1.5 rounded-2xl border">
+                                                <button onClick={()=>setStaff(staff.map(st=>st.id===s.id?{...st, type:'full-time'}:st))} className={`px-4 py-1.5 rounded-xl text-xs font-black transition ${s.type==='full-time'?'bg-white shadow-md text-indigo-600':'text-slate-400 hover:text-slate-600'}`}>正職</button>
+                                                <button onClick={()=>setStaff(staff.map(st=>st.id===s.id?{...st, type:'part-time'}:st))} className={`px-4 py-1.5 rounded-xl text-xs font-black transition ${s.type==='part-time'?'bg-white shadow-md text-indigo-600':'text-slate-400'}`}>兼職</button>
+                                            </div>
+                                            <div className="flex gap-1.5">
+                                                {['morning','evening','night'].map(sh => (
+                                                    <button key={sh} onClick={()=>{
+                                                            const newSh = s.shifts.includes(sh) ? s.shifts.filter(x=>x!==sh) : [...s.shifts, sh];
+                                                            setStaff(staff.map(st=>st.id===s.id?{...st, shifts:newSh}:st));
+                                                        }}
+                                                        className={`w-10 h-10 rounded-xl text-xs font-black flex items-center justify-center border-2 transition ${s.shifts.includes(sh)?'bg-slate-800 border-slate-800 text-white shadow-lg':'bg-white text-slate-300 border-slate-50 hover:border-slate-200'}`}
+                                                    >
+                                                        {sh === 'morning' ? '早' : sh === 'evening' ? '晚' : '夜'}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            <div className="flex-1 min-w-[200px] flex items-center bg-slate-50 px-4 py-2 rounded-2xl border">
+                                                <LucideIcon name="sticky-note" size={14} className="text-slate-400 mr-2"/>
+                                                <input placeholder="備註事項..." className="bg-transparent border-none outline-none w-full text-sm font-bold" value={s.note} onChange={(e)=>setStaff(staff.map(st=>st.id===s.id?{...st, note: e.target.value}:st))}/>
+                                            </div>
+                                            <button onClick={()=>setStaff(staff.filter(st=>st.id!==s.id))} className="text-slate-300 hover:text-rose-500 p-2 hover:bg-rose-50 rounded-xl transition"><LucideIcon name="trash-2" size={20}/></button>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
 
+                        {/* 畫休模式 */}
                         {view === 'user-unavail' && (
-                            <div className="space-y-4">
-                                <div className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border">
-                                    <span className="font-black text-slate-700">{isUnavailLocked ? '🔴 畫休已鎖定' : '🟢 開放畫休中'}</span>
-                                    <button onClick={() => triggerAuth(() => sync({ isUnavailLocked: !isUnavailLocked }))} className="bg-slate-800 text-white px-4 py-2 rounded-xl text-xs font-black">
-                                        {isUnavailLocked ? '解鎖畫休' : '一鍵鎖定'}
+                            <div className="space-y-6">
+                                <div className="flex justify-between items-center bg-white p-5 rounded-3xl shadow-sm border animate-in slide-in-from-top-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className={`w-4 h-4 rounded-full ${isUnavailLocked ? 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]' : 'bg-emerald-500 anim-pulse-custom shadow-[0_0_10px_rgba(16,185,129,0.5)]'}`}></div>
+                                        <span className="font-black text-slate-700 text-lg">{isUnavailLocked ? '畫休功能已鎖定' : '目前開放畫休中'}</span>
+                                    </div>
+                                    <button onClick={() => triggerAuth(() => setIsUnavailLocked(!isUnavailLocked))} className={`px-6 py-3 rounded-2xl font-black text-sm flex items-center gap-2 transition shadow-lg active:scale-95 ${isUnavailLocked ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-slate-800 text-white shadow-slate-200'}`}>
+                                        <LucideIcon name={isUnavailLocked ? "unlock" : "lock"} size={16}/> {isUnavailLocked ? '輸入密碼解鎖' : '一鍵鎖定畫休'}
                                     </button>
                                 </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                                     {staff.sort((a,b)=>a.order-b.order).map(s => (
-                                        <div key={s.id} className="bg-white rounded-3xl border shadow-sm p-3">
-                                            <div className="font-black mb-2 px-1 text-slate-800">{s.name}</div>
-                                            <div className="calendar-grid">
-                                                {dates.map(d => {
-                                                    const k = `${s.id}-${year}-${month+1}-${d}`;
-                                                    const isOff = unavail[k]?.full;
-                                                    return (
-                                                        <button key={d} disabled={isUnavailLocked} onClick={() => sync({ unavail: { ...unavail, [k]: { full: !isOff } } })}
-                                                            className={`aspect-square rounded-xl border flex items-center justify-center text-xs font-black transition ${isOff ? 'bg-rose-500 border-rose-600 text-white' : 'bg-slate-50 text-slate-400'}`}>
-                                                            {d}
-                                                        </button>
-                                                    );
-                                                })}
+                                        <div key={s.id} className="bg-white rounded-[2.5rem] border shadow-sm overflow-hidden flex flex-col group">
+                                            <div className="bg-slate-50/80 px-6 py-4 border-b flex justify-between items-center group-hover:bg-indigo-50/30 transition">
+                                                <div className="flex flex-col">
+                                                    <span className="font-black text-slate-800 text-lg">{s.name}</span>
+                                                    <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">{s.type==='full-time'?'正職':'兼職'} • {s.shifts.map(sh=>sh==='morning'?'早':sh==='evening'?'晚':'夜').join('')}</span>
+                                                </div>
+                                                <LucideIcon name="user" className="text-slate-200" size={24}/>
+                                            </div>
+                                            <div className="p-5">
+                                                <div className="calendar-grid mb-2">
+                                                    {['一','二','三','四','五','六','日'].map(w => <div key={w} className={`text-center text-[11px] font-black ${w==='五'||w==='六'||w==='日' ? 'text-rose-500':'text-slate-400'}`}>{w}</div>)}
+                                                </div>
+                                                <div className="calendar-grid">
+                                                    {Array.from({ length: adjustedStartDay }).map((_, i) => <div key={i} />)}
+                                                    {dates.map(d => {
+                                                        const k = `${s.id}-${year}-${month+1}-${d}`;
+                                                        const data = unavail[k];
+                                                        const isRed = isDayRed(d);
+                                                        return (
+                                                            <button 
+                                                                key={d} 
+                                                                disabled={isUnavailLocked}
+                                                                onClick={() => setPopover({ type: 'unavail', staffId: s.id, day: d })}
+                                                                className={`aspect-square rounded-2xl flex flex-col items-center justify-center relative border transition-all
+                                                                    ${isRed ? 'bg-rose-50 border-rose-100' : 'bg-white border-slate-100'}
+                                                                    ${isUnavailLocked ? 'opacity-40 grayscale' : 'hover:border-indigo-400 hover:shadow-md hover:-translate-y-0.5 active:scale-90'}
+                                                                `}
+                                                            >
+                                                                <span className={`absolute top-1 left-2 text-[10px] font-black ${isRed ? 'text-rose-500' : 'text-slate-300'}`}>{d}</span>
+                                                                {data && (
+                                                                    <div className="flex flex-col items-center scale-90">
+                                                                        {data.full && <span className="text-[12px] font-black text-slate-700 bg-slate-200 px-1 rounded">休</span>}
+                                                                        <div className="flex gap-0.5 mt-0.5">
+                                                                            {data.morning && <div className="w-2 h-2 rounded-full bg-amber-400 shadow-sm shadow-amber-200"></div>}
+                                                                            {data.evening && <div className="w-2 h-2 rounded-full bg-rose-600 shadow-sm shadow-rose-200"></div>}
+                                                                            {data.night && <div className="w-2 h-2 rounded-full bg-purple-600 shadow-sm shadow-purple-200"></div>}
+                                                                        </div>
+                                                                        {(data.canUntil || data.noAfter) && <span className="text-[11px] font-black text-emerald-500 mt-0.5">限</span>}
+                                                                    </div>
+                                                                )}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
                                             </div>
                                         </div>
                                     ))}
@@ -243,88 +286,256 @@
                             </div>
                         )}
 
+                        {/* 排班管理 */}
                         {view === 'admin-schedule' && (
-                            <div className="bg-white rounded-3xl border shadow-xl overflow-hidden flex flex-col">
-                                <div className="p-4 border-b flex justify-between items-center bg-slate-50/50">
-                                    <button onClick={()=>setHideUnavailMarker(!hideUnavailMarker)} className="p-2 bg-white border rounded-xl"><Icon name={hideUnavailMarker ? "eye-off" : "eye"} size={18}/></button>
-                                    <button onClick={exportTable} className="bg-emerald-500 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg">
-                                        <Icon name="share-2" size={14}/> 導出班表
-                                    </button>
+                            <div className="bg-white rounded-[2.5rem] border shadow-xl overflow-hidden flex flex-col animate-in fade-in duration-500">
+                                <div className="p-5 border-b flex flex-wrap gap-4 justify-between items-center bg-slate-50/50 sticky top-0 z-40 backdrop-blur-md">
+                                    <div className="flex items-center gap-4">
+                                        <button onClick={()=>setHideUnavailMarker(!hideUnavailMarker)} className={`p-3 rounded-2xl transition shadow-sm border ${hideUnavailMarker ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-400 hover:text-slate-600'}`}>
+                                            <LucideIcon name={hideUnavailMarker ? "eye-off" : "eye"} size={20}/>
+                                        </button>
+                                        <div className="flex items-center gap-3 bg-white px-5 py-2.5 rounded-2xl border shadow-sm">
+                                            <input type="checkbox" id="lock-sched" checked={isScheduleLocked} onChange={() => triggerAuth(() => setIsScheduleLocked(!isScheduleLocked))} className="w-5 h-5 accent-indigo-600 cursor-pointer"/>
+                                            <label htmlFor="lock-sched" className="text-sm font-black text-slate-600 cursor-pointer">一鍵鎖定修改 (密碼0418)</label>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex gap-3">
+                                        <button onClick={handleExport} className="bg-emerald-500 text-white px-6 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg shadow-emerald-100 active:scale-95 transition">
+                                            <LucideIcon name="download" size={18}/> 導出班表圖片
+                                        </button>
+                                    </div>
                                 </div>
-                                <div id="export-area" className="flex-1 overflow-auto no-scrollbar min-h-[400px]">
-                                    <table className="w-full border-collapse">
-                                        <thead>
-                                            <tr className="bg-slate-100">
-                                                <th className="sticky left-0 bg-slate-100 p-2 border-r z-20 text-[10px] font-black">員工</th>
-                                                {dates.map(d => (
-                                                    <th key={d} className={`p-1 border-r schedule-cell text-center ${isRedDate(d)?'bg-rose-50 text-rose-600':'bg-white text-slate-800'}`}>
-                                                        <div className="text-xs font-black">{d}</div>
-                                                    </th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {staff.sort((a,b)=>a.order-b.order).map(s => (
-                                                <tr key={s.id}>
-                                                    <td className="sticky left-0 bg-white p-2 border-r border-b text-center font-black text-xs z-10">{s.name}</td>
-                                                    {dates.map(d => {
-                                                        const sKey = `${s.id}-${d}`;
-                                                        const uKey = `${s.id}-${year}-${month+1}-${d}`;
-                                                        const shift = schedules[sKey];
-                                                        const isOff = unavail[uKey]?.full;
-                                                        const isConflict = shift && isOff;
 
-                                                        return (
-                                                            <td key={d} onClick={()=>setActivePop({type:'schedule', staffId: s.id, day: d})} 
-                                                                className={`border-r border-b p-0 relative schedule-cell transition cursor-pointer hover:bg-slate-50`}
-                                                                style={{ backgroundColor: (isOff && !hideUnavailMarker) ? 'rgba(71,85,105,0.2)' : 'transparent' }}
-                                                            >
-                                                                {shift && (
-                                                                    <div className={`absolute inset-0 flex items-center justify-center ${isConflict ? 'conflict-pulse' : ''}`} style={{ backgroundColor: getShiftColor(shift) }}>
-                                                                        <span className="text-lg font-black text-slate-900">{shift.split('-')[0]}</span>
-                                                                        {isConflict && <span className="absolute -top-1 -right-1 bg-rose-600 text-white text-[8px] px-1 rounded">!</span>}
-                                                                    </div>
-                                                                )}
-                                                                {isOff && !shift && !hideUnavailMarker && <span className="absolute inset-0 flex items-center justify-center text-slate-400 font-black text-sm">休</span>}
-                                                            </td>
-                                                        );
-                                                    })}
+                                <div className="p-4 overflow-x-auto no-scrollbar" id="table-to-export">
+                                    <div className="flex gap-3 mb-6 overflow-x-auto pb-2 no-scrollbar">
+                                        {staff.sort((a,b)=>a.order-b.order).map(s => (
+                                            <div key={s.id} className="bg-white border-2 border-slate-50 rounded-3xl px-6 py-3 shadow-sm min-w-[130px] flex-shrink-0">
+                                                <div className="text-[11px] font-black text-slate-400 mb-1">{s.name}</div>
+                                                <div className="flex justify-between items-end">
+                                                    <span className="text-2xl font-black text-indigo-600 tracking-tighter">{stats[s.id]?.hours}<span className="text-xs ml-0.5">時</span></span>
+                                                    <span className="text-xs font-black text-slate-400 pb-1">{stats[s.id]?.days}天</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <div className="inline-block min-w-full align-middle border-2 border-slate-100 rounded-3xl overflow-hidden shadow-sm">
+                                        <table className="min-w-full border-collapse">
+                                            <thead className="bg-slate-50">
+                                                <tr>
+                                                    <th className="sticky left-0 z-40 bg-slate-100 p-3 border-r border-b text-[12px] font-black text-slate-500 min-w-[100px] shadow-sm">姓名</th>
+                                                    {dates.map(d => (
+                                                        <th key={d} onClick={()=> {
+                                                            const k = `${year}-${month+1}-${d}`;
+                                                            setCustomRedDays({...customRedDays, [k]: !customRedDays[k]});
+                                                        }} className={`p-1 border-b border-r schedule-cell cursor-pointer hover:bg-slate-200 transition ${isDayRed(d)?'bg-rose-50':'bg-white'}`}>
+                                                            <div className={`text-sm font-black ${isDayRed(d)?'text-rose-600':'text-slate-800'}`}>{d}</div>
+                                                            <div className={`text-[10px] font-bold ${isDayRed(d)?'text-rose-400':'text-slate-400'}`}>{['日','一','二','三','四','五','六'][new Date(year, month, d).getDay()]}</div>
+                                                        </th>
+                                                    ))}
                                                 </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
+                                            </thead>
+                                            <tbody>
+                                                {staff.sort((a,b)=>a.order-b.order).map(s => (
+                                                    <tr key={s.id} className="hover:bg-slate-50/50 transition">
+                                                        <td className="sticky left-0 z-20 bg-white p-2 border-r border-b text-center shadow-[4px_0_8px_rgba(0,0,0,0.02)]">
+                                                            <span className="font-black text-slate-700 text-sm">{s.name}</span>
+                                                        </td>
+                                                        {dates.map(d => {
+                                                            const sKey = `${s.id}-${d}`;
+                                                            const uKey = `${s.id}-${year}-${month+1}-${d}`;
+                                                            const shift = schedules[sKey];
+                                                            const uData = unavail[uKey];
+                                                            
+                                                            // 智慧衝突偵測
+                                                            let conflict = false;
+                                                            if (shift && uData) {
+                                                                const t = parseTime(shift);
+                                                                if (uData.full) conflict = true;
+                                                                if (uData.canUntil && t.end > parseInt(uData.canUntil)) conflict = true;
+                                                                if (uData.noAfter && t.start < parseInt(uData.noAfter)) conflict = true;
+                                                                if (uData.morning && t.start < 16) conflict = true;
+                                                                if (uData.evening && (t.start >= 16 && t.start < 23)) conflict = true;
+                                                                if (uData.night && t.start >= 23) conflict = true;
+                                                            }
+
+                                                            // 背景邏輯
+                                                            const cellStyle = uData && !hideUnavailMarker ? {
+                                                                backgroundColor: uData.full ? 'rgba(71,85,105,0.3)' : 
+                                                                                uData.morning ? 'rgba(250,204,21,0.3)' : 
+                                                                                uData.evening ? 'rgba(153,27,27,0.3)' : 
+                                                                                uData.night ? 'rgba(126,34,206,0.3)' : 
+                                                                                uData.canUntil || uData.noAfter ? 'rgba(34,197,94,0.3)' : 'transparent'
+                                                            } : {};
+
+                                                            return (
+                                                                <td key={d} onClick={()=>!isScheduleLocked && setPopover({type:'schedule', staffId: s.id, day: d})} 
+                                                                    className={`border-r border-b p-0 relative schedule-cell transition overflow-hidden group/cell ${isScheduleLocked ? '' : 'cursor-pointer hover:ring-2 ring-indigo-400 ring-inset'}`}
+                                                                    style={cellStyle}
+                                                                >
+                                                                    {uData && !hideUnavailMarker && (
+                                                                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none opacity-80 scale-90">
+                                                                            {uData.full && <span className="text-lg font-black text-slate-900 leading-none">休</span>}
+                                                                            <div className="text-[11px] font-black text-slate-900 flex flex-col items-center leading-none">
+                                                                                {uData.morning && "早休"} {uData.evening && "晚休"} {uData.night && "夜休"}
+                                                                                <div className="flex">
+                                                                                    {uData.canUntil && <span className="bg-white/50 px-0.5 rounded">~{uData.canUntil}</span>}
+                                                                                    {uData.noAfter && <span className="bg-white/50 px-0.5 rounded">{uData.noAfter}~</span>}
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                    {shift && (
+                                                                        <div className="absolute inset-0 z-10 flex items-center justify-center transition-transform group-hover/cell:scale-105" style={{ backgroundColor: getShiftColor(shift) }}>
+                                                                            <span className="text-xl font-black text-slate-900 tracking-tighter drop-shadow-sm">{shift.split('-')[0]}</span>
+                                                                            {conflict && <div className="absolute inset-0 border-2 border-rose-500 animate-pulse z-20"></div>}
+                                                                            {conflict && <div className="absolute top-0 right-0 bg-rose-600 text-white text-[8px] px-1 font-black rounded-bl shadow-sm z-30">! 衝突</div>}
+                                                                        </div>
+                                                                    )}
+                                                                </td>
+                                                            );
+                                                        })}
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
                             </div>
                         )}
                     </main>
 
-                    {/* 排班彈窗 */}
-                    {activePop && (
-                        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[200] flex items-center justify-center p-6">
-                            <div className="bg-white rounded-3xl p-6 w-full max-w-xs shadow-2xl">
-                                <h3 className="text-lg font-black mb-4 text-center">設定排班 - {activePop.day}日</h3>
-                                <div className="grid grid-cols-2 gap-2 mb-4">
-                                    {['08-16', '10-17', '12-20', '16-23', '17-23', '23-05'].map(t => (
-                                        <button key={t} onClick={() => { sync({ schedules: { ...schedules, [`${activePop.staffId}-${activePop.day}`]: t } }); setActivePop(null); }}
-                                            className="p-3 bg-slate-100 rounded-xl font-black text-sm hover:bg-indigo-600 hover:text-white transition">{t}</button>
-                                    ))}
+                    {/* --- React AuthModal --- */}
+                    {authModal.show && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[200] flex items-center justify-center p-6 animate-in fade-in duration-200">
+                            <div className="bg-white rounded-[3rem] w-full max-w-sm p-10 shadow-2xl flex flex-col items-center border animate-in zoom-in duration-300">
+                                <div className="w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center text-indigo-600 mb-6 shadow-inner">
+                                    <LucideIcon name="shield-check" size={40}/>
                                 </div>
-                                <button onClick={() => { const newS = {...schedules}; delete newS[`${activePop.staffId}-${activePop.day}`]; sync({ schedules: newS }); setActivePop(null); }} className="w-full text-rose-500 font-black p-2 mb-2">清除班表</button>
-                                <button onClick={() => setActivePop(null)} className="w-full text-slate-400 font-black p-2">取消</button>
+                                <h3 className="text-2xl font-black mb-1 text-slate-800 tracking-tight">管理員驗證</h3>
+                                <p className="text-slate-400 text-xs mb-8 font-bold tracking-widest uppercase">請輸入安全密碼</p>
+                                <input 
+                                    type="password" 
+                                    autoFocus
+                                    className="w-full bg-slate-100 border-4 border-transparent focus:border-indigo-500 rounded-3xl p-5 text-center text-4xl font-black tracking-[1em] outline-none mb-8 shadow-sm transition-all"
+                                    placeholder="••••"
+                                    value={authModal.value}
+                                    onChange={(e)=>setAuthModal({...authModal, value: e.target.value})}
+                                    onKeyDown={(e)=>e.key==='Enter' && handleAuthSubmit()}
+                                />
+                                <div className="flex gap-4 w-full">
+                                    <button onClick={()=>setAuthModal({show:false, callback:null, value:""})} className="flex-1 py-4 font-black text-slate-400 hover:text-slate-600 transition">取消</button>
+                                    <button onClick={handleAuthSubmit} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-200 active:scale-95 transition">驗證</button>
+                                </div>
                             </div>
                         </div>
                     )}
 
-                    {/* Auth Modal */}
-                    {showAuthModal && (
-                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[300] flex items-center justify-center p-6">
-                            <div className="bg-white rounded-[2.5rem] w-full max-w-sm p-8 shadow-2xl flex flex-col items-center">
-                                <Icon name="shield-lock" size={48} className="text-indigo-600 mb-4" />
-                                <h3 className="text-xl font-black mb-8">管理驗證 (0418)</h3>
-                                <input type="password" autoFocus className="w-full bg-slate-100 rounded-2xl p-4 text-center text-3xl font-black mb-6 outline-none border-2 focus:border-indigo-500" value={authInput} onChange={(e)=>setAuthInput(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && handleAuthSubmit()} />
-                                <div className="flex gap-3 w-full">
-                                    <button onClick={()=>setShowAuthModal(false)} className="flex-1 py-4 font-black text-slate-400">取消</button>
-                                    <button onClick={handleAuthSubmit} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black">進入</button>
+                    {/* --- 畫休設定 Popover --- */}
+                    {popover?.type === 'unavail' && (
+                        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[150] flex items-center justify-center p-4 animate-in fade-in" onClick={()=>setPopover(null)}>
+                            <div className="bg-white rounded-[2.5rem] w-full max-w-[360px] shadow-2xl overflow-hidden animate-in zoom-in duration-200 border" onClick={e=>e.stopPropagation()}>
+                                <div className="bg-slate-50 px-6 py-4 border-b flex justify-between items-center">
+                                    <div className="flex flex-col">
+                                        <span className="font-black text-sm text-slate-800">{popover.day}日 畫休設定</span>
+                                        <span className="text-[10px] font-bold text-indigo-500 uppercase">{staff.find(st=>st.id===popover.staffId).name}</span>
+                                    </div>
+                                    <button onClick={()=>setPopover(null)} className="p-2 hover:bg-slate-200 rounded-xl transition"><LucideIcon name="x" size={20}/></button>
+                                </div>
+                                <div className="p-6 space-y-5">
+                                    <button onClick={()=>{
+                                        const k = `${popover.staffId}-${year}-${month+1}-${popover.day}`;
+                                        const d = unavail[k] || {};
+                                        setUnavail({...unavail, [k]: {...d, full: !d.full}});
+                                    }} className={`w-full py-4 rounded-2xl font-black border-2 transition-all shadow-sm ${unavail[`${popover.staffId}-${year}-${month+1}-${popover.day}`]?.full ? 'bg-slate-800 border-slate-800 text-white shadow-lg' : 'bg-slate-50 border-transparent text-slate-400'}`}>全天休假</button>
+                                    
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {['morning', 'evening', 'night'].map(type => {
+                                            const s = staff.find(st=>st.id===popover.staffId);
+                                            if (!s.shifts.includes(type)) return null;
+                                            const k = `${popover.staffId}-${year}-${month+1}-${popover.day}`;
+                                            const active = unavail[k]?.[type];
+                                            const label = type === 'morning' ? '早休' : (type === 'evening' ? '晚休' : '夜休');
+                                            const activeStyle = type === 'morning' ? 'bg-amber-400 border-amber-400 text-white shadow-amber-100' : (type === 'evening' ? 'bg-rose-600 border-rose-600 text-white shadow-rose-100' : 'bg-purple-600 border-purple-600 text-white shadow-purple-100');
+                                            return (
+                                                <button key={type} onClick={()=>{
+                                                    const d = unavail[k] || {};
+                                                    setUnavail({...unavail, [k]: {...d, [type]: !d[type]}});
+                                                }} className={`py-3 rounded-2xl text-xs font-black border transition shadow-sm ${active ? activeStyle + ' shadow-md' : 'bg-slate-50 border-slate-50 text-slate-300 hover:border-slate-200'}`}>
+                                                    {label}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+
+                                    <div className="flex gap-4 items-center">
+                                        <div className="flex-1 bg-slate-50 border-2 border-slate-100 p-3 rounded-2xl flex flex-col items-center">
+                                            <span className="text-[10px] font-black text-slate-400 uppercase mb-1">可到幾點</span>
+                                            <div className="flex items-center gap-1">
+                                                <input type="number" className="bg-transparent w-10 text-center font-black text-xl outline-none" placeholder="-" value={unavail[`${popover.staffId}-${year}-${month+1}-${popover.day}`]?.canUntil || ""} onChange={(e)=>setUnavail({...unavail, [`${popover.staffId}-${year}-${month+1}-${popover.day}`]: {...(unavail[`${popover.staffId}-${year}-${month+1}-${popover.day}`]||{}), canUntil: e.target.value}})}/>
+                                                <span className="text-xs font-black text-slate-400">點</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex-1 bg-slate-50 border-2 border-slate-100 p-3 rounded-2xl flex flex-col items-center">
+                                            <span className="text-[10px] font-black text-slate-400 uppercase mb-1">幾點後可以</span>
+                                            <div className="flex items-center gap-1">
+                                                <input type="number" className="bg-transparent w-10 text-center font-black text-xl outline-none" placeholder="-" value={unavail[`${popover.staffId}-${year}-${month+1}-${popover.day}`]?.noAfter || ""} onChange={(e)=>setUnavail({...unavail, [`${popover.staffId}-${year}-${month+1}-${popover.day}`]: {...(unavail[`${popover.staffId}-${year}-${month+1}-${popover.day}`]||{}), noAfter: e.target.value}})}/>
+                                                <span className="text-xs font-black text-slate-400">點</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <textarea placeholder="自定義備註 (將以淺綠色顯示)..." className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-black border-2 border-slate-100 outline-none focus:border-indigo-300 h-20 transition" value={unavail[`${popover.staffId}-${year}-${month+1}-${popover.day}`]?.note || ""} onChange={(e)=>setUnavail({...unavail, [`${popover.staffId}-${year}-${month+1}-${popover.day}`]: {...(unavail[`${popover.staffId}-${year}-${month+1}-${popover.day}`]||{}), note: e.target.value}})}/>
+                                    
+                                    <button onClick={()=>setPopover(null)} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-100 active:scale-95 transition">確認儲存</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- 管理排班 Popover --- */}
+                    {popover?.type === 'schedule' && (
+                        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[150] flex items-center justify-center p-4 animate-in fade-in" onClick={()=>setPopover(null)}>
+                            <div className="bg-white rounded-[2.5rem] w-full max-w-[360px] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-8 duration-300 border" onClick={e=>e.stopPropagation()}>
+                                <div className="bg-slate-50 px-6 py-4 border-b flex justify-between items-center">
+                                    <div className="flex flex-col">
+                                        <span className="font-black text-sm text-slate-800">{staff.find(st=>st.id===popover.staffId).name}</span>
+                                        <span className="text-[10px] font-bold text-indigo-500 uppercase">{popover.day}日 排班時段</span>
+                                    </div>
+                                    <button onClick={()=>setPopover(null)} className="p-2 hover:bg-slate-200 rounded-xl transition"><LucideIcon name="x" size={20}/></button>
+                                </div>
+                                <div className="p-6 space-y-6">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {(staff.find(st=>st.id===popover.staffId).type === 'full-time' ? ['10-17', '16-23'] : 
+                                            [
+                                                ...(staff.find(st=>st.id===popover.staffId).shifts.includes('morning') ? ['10-16', '12-16', '12-20'] : []),
+                                                ...(staff.find(st=>st.id===popover.staffId).shifts.includes('evening') ? ['12-20', '17-23', '18-23'] : []),
+                                                ...(staff.find(st=>st.id===popover.staffId).shifts.includes('night') ? ['23-05', '24-05'] : [])
+                                            ]
+                                        ).map(t => (
+                                            <button key={t} onClick={()=>{
+                                                setSchedules({...schedules, [`${popover.staffId}-${popover.day}`]: t});
+                                                setPopover(null);
+                                            }} className="py-4 rounded-2xl font-black border-2 border-slate-50 bg-slate-50 hover:bg-white hover:border-indigo-400 hover:shadow-md transition-all text-sm">{t}</button>
+                                        ))}
+                                    </div>
+                                    <div className="space-y-3">
+                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">自定義時段</span>
+                                        <div className="flex gap-3">
+                                            <input 
+                                                placeholder="例: 13-21" 
+                                                className="flex-1 bg-slate-100 p-4 rounded-2xl font-black text-sm outline-none border-2 border-transparent focus:border-indigo-500 transition shadow-inner"
+                                                value={schedules[`${popover.staffId}-${popover.day}`] || ""}
+                                                onChange={(e) => setSchedules({...schedules, [`${popover.staffId}-${popover.day}`]: e.target.value})}
+                                            />
+                                            <button onClick={()=>{
+                                                setSchedules({...schedules, [`${popover.staffId}-${popover.day}`]: ""});
+                                                setPopover(null);
+                                            }} className="bg-rose-50 text-rose-500 px-5 rounded-2xl text-xs font-black shadow-sm active:scale-95 transition">清除</button>
+                                        </div>
+                                    </div>
+                                    <button onClick={()=>setPopover(null)} className="w-full py-5 bg-indigo-600 text-white rounded-3xl font-black shadow-xl shadow-indigo-100 active:scale-95 transition">儲存排班</button>
                                 </div>
                             </div>
                         </div>
