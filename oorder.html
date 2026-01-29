@@ -1,231 +1,265 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>雲端盤點系統 - Firebase 實測版</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    
-    <!-- Firebase SDK (瀏覽器模組版) -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, updateDoc, deleteDoc, addDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
-        import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-analytics.js";
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { 
+  Plus, 
+  Trash2, 
+  Clipboard, 
+  Settings, 
+  LayoutDashboard, 
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  Save
+} from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, 
+  collection, 
+  onSnapshot, 
+  doc, 
+  updateDoc, 
+  deleteDoc, 
+  query, 
+  addDoc
+} from 'firebase/firestore';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  signInWithCustomToken, 
+  onAuthStateChanged 
+} from 'firebase/auth';
 
-        // 您的 Firebase 配置資訊
-        const firebaseConfig = {
-            apiKey: "AIzaSyDS7PQrDh05bIGu9WYCcFM0s1GvhzDwz4M",
-            authDomain: "order-718b1.firebaseapp.com",
-            projectId: "order-718b1",
-            storageBucket: "order-718b1.firebasestorage.app",
-            messagingSenderId: "454465000018",
-            appId: "1:454465000018:web:ac7c787ba3e423a2a1458b",
-            measurementId: "G-3MC1RTW85K"
-        };
+// --- 初始化 Firebase ---
+const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'simple-stock-app';
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const analytics = getAnalytics(app);
-        const appId = "order-inventory-system"; // 您專案的識別碼
+// 自定義輸入組件，防止注音輸入法被中斷
+const SafeInput = ({ value, onSave, className, placeholder, type = "text" }) => {
+  const [localValue, setLocalValue] = useState(value);
+  const isComposing = useRef(false);
 
-        // 暴露給全域供 React 使用
-        window.fb = { auth, db, appId, signInAnonymously, onAuthStateChanged, doc, setDoc, onSnapshot, collection, updateDoc, deleteDoc, addDoc };
-    </script>
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
 
-    <style>
-        body { background-color: #f8fafc; -webkit-tap-highlight-color: transparent; font-family: sans-serif; }
-        input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
+  const handleBlur = () => {
+    if (localValue !== value) {
+      onSave(type === "number" ? parseFloat(localValue) || 0 : localValue);
+    }
+  };
 
-    <script type="text/babel">
-        const { useState, useEffect, useMemo, useRef } = React;
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !isComposing.current) {
+      e.target.blur();
+    }
+  };
 
-        const Icon = ({ name, size = 20, className = "" }) => {
-            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
-            return <i data-lucide={name} className={className} style={{width: size, height: size}}></i>;
-        };
+  return (
+    <input
+      type={type}
+      value={localValue}
+      placeholder={placeholder}
+      className={className}
+      onCompositionStart={() => { isComposing.current = true; }}
+      onCompositionEnd={(e) => { 
+        isComposing.current = false;
+        setLocalValue(e.target.value);
+      }}
+      onChange={(e) => setLocalValue(e.target.value)}
+      onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
+    />
+  );
+};
 
-        const App = () => {
-            const [user, setUser] = useState(null);
-            const [items, setItems] = useState([]);
-            const [view, setView] = useState('inventory');
-            const [dayMode, setDayMode] = useState('weekday');
-            const [loading, setLoading] = useState(true);
+const App = () => {
+  const [items, setItems] = useState([]);
+  const [user, setUser] = useState(null);
+  const [dayMode, setDayMode] = useState('weekday'); 
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [authError, setAuthError] = useState(null);
+  const [copySuccess, setCopySuccess] = useState(false);
 
-            // 1. 初始化登入
-            useEffect(() => {
-                const init = async () => {
-                    const { auth, signInAnonymously, onAuthStateChanged } = window.fb;
-                    try {
-                        await signInAnonymously(auth);
-                        onAuthStateChanged(auth, setUser);
-                    } catch (err) {
-                        console.error("Auth Error:", err);
-                    }
-                };
-                init();
-            }, []);
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        setAuthError("連線失敗：請確保 Firebase 已啟用匿名登入。");
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
 
-            // 2. 即時同步資料
-            useEffect(() => {
-                if (!user) return;
-                const { db, appId, collection, onSnapshot } = window.fb;
-                const path = collection(db, 'artifacts', appId, 'public', 'data', 'items');
-                
-                const unsubscribe = onSnapshot(path, (snapshot) => {
-                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setItems(data);
-                    setLoading(false);
-                }, (err) => {
-                    console.error("Firestore Error:", err);
-                    setLoading(false);
-                });
-                return () => unsubscribe();
-            }, [user]);
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setItems(data.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)));
+    }, (err) => console.error(err));
+    return () => unsubscribe();
+  }, [user]);
 
-            const updateItem = async (id, field, value) => {
-                if (!user) return;
-                const { db, appId, doc, updateDoc } = window.fb;
-                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', id), { [field]: value });
-            };
+  const updateItem = async (id, field, value) => {
+    try {
+      const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id);
+      await updateDoc(itemRef, { [field]: value });
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
-            const addItem = async () => {
-                const { db, appId, collection, addDoc } = window.fb;
-                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'items'), {
-                    name: '新需求品項',
-                    unit: '件',
-                    weekdayTarget: 0,
-                    weekendTarget: 0,
-                    currentStock: 0,
-                    roundUp: false,
-                    createdAt: Date.now()
-                });
-            };
+  const addItem = async () => {
+    const newItem = {
+      name: '新項目',
+      unit: '份',
+      weekdayTarget: 10,
+      weekendTarget: 15,
+      currentStock: 0,
+      roundUp: true,
+      createdAt: Date.now()
+    };
+    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), newItem);
+  };
 
-            const deleteItem = async (id) => {
-                const { db, appId, doc, deleteDoc } = window.fb;
-                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', id));
-            };
+  const deleteItem = async (id) => {
+    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id));
+  };
 
-            const calculateOrder = (item) => {
-                const target = dayMode === 'weekday' ? (item.weekdayTarget || 0) : (item.weekendTarget || 0);
-                let needed = target - (item.currentStock || 0);
-                if (needed < 0) needed = 0;
-                return item.roundUp ? Math.ceil(needed) : needed;
-            };
+  const calculateOrder = (item) => {
+    const target = dayMode === 'weekday' ? (item.weekdayTarget || 0) : (item.weekendTarget || 0);
+    const diff = target - (item.currentStock || 0);
+    if (diff <= 0) return 0;
+    return item.roundUp ? Math.ceil(diff) : diff;
+  };
 
-            const summaryText = useMemo(() => {
-                const filtered = items.map(i => ({...i, qty: calculateOrder(i)})).filter(i => i.qty > 0);
-                if (!filtered.length) return "無須叫貨";
-                return `【叫貨清單 - ${dayMode==='weekday'?'平日':'假日'}】\n` + filtered.map(i => `• ${i.name}: ${i.qty} ${i.unit}`).join('\n');
-            }, [items, dayMode]);
+  const summaryText = useMemo(() => {
+    return items
+      .map(i => ({ name: i.name, qty: calculateOrder(i), unit: i.unit }))
+      .filter(i => i.qty > 0)
+      .map(i => `${i.name}: ${i.qty} ${i.unit}`)
+      .join('\n');
+  }, [items, dayMode]);
 
-            if (loading) return <div className="flex h-screen items-center justify-center text-slate-400 animate-pulse">連線雲端資料庫中...</div>;
+  const copyToClipboard = () => {
+    const el = document.createElement('textarea');
+    el.value = summaryText;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2000);
+  };
 
-            return (
-                <div className="max-w-md mx-auto min-h-screen flex flex-col pb-24">
-                    <header className="bg-white/80 backdrop-blur border-b sticky top-0 z-20 px-4 py-4 flex justify-between items-center">
-                        <h1 className="font-black text-xl text-indigo-600 flex items-center gap-2">
-                            <Icon name="database" size={24}/> 雲端盤點
-                        </h1>
-                        <div className="flex bg-slate-100 p-1 rounded-xl">
-                            <button onClick={()=>setView('inventory')} className={`px-4 py-1.5 rounded-lg text-xs font-bold ${view==='inventory'?'bg-white shadow text-indigo-600':'text-slate-400'}`}>盤點</button>
-                            <button onClick={()=>setView('settings')} className={`px-4 py-1.5 rounded-lg text-xs font-bold ${view==='settings'?'bg-white shadow text-indigo-600':'text-slate-400'}`}>設定</button>
-                        </div>
-                    </header>
+  if (authError) return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center">
+      <AlertCircle className="w-12 h-12 text-red-500 mb-2" />
+      <p>{authError}</p>
+    </div>
+  );
 
-                    <main className="p-4 space-y-4">
-                        {view === 'inventory' ? (
-                            <>
-                                <div className="flex gap-2">
-                                    <button onClick={()=>setDayMode('weekday')} className={`flex-1 py-3 rounded-2xl font-bold border-2 transition ${dayMode==='weekday'?'bg-indigo-50 border-indigo-500 text-indigo-600':'bg-white border-slate-100 text-slate-300'}`}>平日盤點</button>
-                                    <button onClick={()=>setDayMode('weekend')} className={`flex-1 py-3 rounded-2xl font-bold border-2 transition ${dayMode==='weekend'?'bg-amber-50 border-amber-500 text-amber-600':'bg-white border-slate-100 text-slate-300'}`}>假日盤點</button>
-                                </div>
-                                <div className="bg-white rounded-3xl border shadow-sm divide-y">
-                                    {items.sort((a,b)=>a.createdAt-b.createdAt).map(item => {
-                                        const qty = calculateOrder(item);
-                                        return (
-                                            <div key={item.id} className="flex items-center p-4 gap-4">
-                                                <div className="flex-1">
-                                                    <div className="font-black text-slate-700">{item.name}</div>
-                                                    <div className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">目標: {dayMode==='weekday'?item.weekdayTarget:item.weekendTarget} {item.unit}</div>
-                                                </div>
-                                                <input 
-                                                    type="number"
-                                                    className="w-20 text-center font-black text-xl bg-slate-100 rounded-xl py-2 focus:ring-2 ring-indigo-500 outline-none"
-                                                    value={item.currentStock}
-                                                    onChange={(e)=>updateItem(item.id, 'currentStock', parseFloat(e.target.value)||0)}
-                                                />
-                                                <div className="w-12 text-right font-black">
-                                                    {qty > 0 ? <span className="text-red-500">+{qty}</span> : <Icon name="check" className="text-emerald-500 ml-auto"/>}
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                                <div className="bg-slate-900 rounded-3xl p-5 text-white">
-                                    <div className="flex justify-between items-center mb-2">
-                                        <span className="text-xs font-bold text-slate-400">叫貨預覽 (即時同步)</span>
-                                        <button onClick={()=>{navigator.clipboard.writeText(summaryText)}} className="text-[10px] bg-white/10 px-2 py-1 rounded">複製文字</button>
-                                    </div>
-                                    <pre className="text-sm font-sans opacity-90">{summaryText}</pre>
-                                </div>
-                            </>
-                        ) : (
-                            <div className="space-y-3">
-                                <button onClick={addItem} className="w-full py-4 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 font-bold hover:bg-slate-50 flex items-center justify-center gap-2">
-                                    <Icon name="plus-circle"/> 新增品項
-                                </button>
-                                {items.map(item => (
-                                    <div key={item.id} className="bg-white p-4 rounded-2xl border shadow-sm space-y-3">
-                                        <div className="flex gap-2">
-                                            <input className="flex-1 font-bold outline-none border-b border-transparent focus:border-indigo-500" value={item.name} onChange={(e)=>updateItem(item.id, 'name', e.target.value)}/>
-                                            <input className="w-12 text-center text-sm text-slate-400 bg-slate-50 rounded" value={item.unit} onChange={(e)=>updateItem(item.id, 'unit', e.target.value)}/>
-                                            <button onClick={()=>deleteItem(item.id)} className="text-slate-300 hover:text-red-500"><Icon name="x" size={18}/></button>
-                                        </div>
-                                        <div className="flex gap-4">
-                                            <div className="flex-1 bg-slate-50 p-2 rounded-xl text-center">
-                                                <label className="text-[10px] text-slate-400 block font-bold">平日應備</label>
-                                                <input type="number" className="bg-transparent font-black w-full text-center" value={item.weekdayTarget} onChange={(e)=>updateItem(item.id, 'weekdayTarget', parseFloat(e.target.value)||0)}/>
-                                            </div>
-                                            <div className="flex-1 bg-slate-50 p-2 rounded-xl text-center">
-                                                <label className="text-[10px] text-slate-400 block font-bold">假日應備</label>
-                                                <input type="number" className="bg-transparent font-black w-full text-center" value={item.weekendTarget} onChange={(e)=>updateItem(item.id, 'weekendTarget', parseFloat(e.target.value)||0)}/>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </main>
+  if (!user) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
 
-                    <footer className="fixed bottom-6 left-4 right-4 z-30">
-                        <div className="bg-indigo-600 text-white p-4 rounded-2xl shadow-2xl flex justify-between items-center">
-                            <div className="flex items-center gap-3">
-                                <div className="w-2 h-2 bg-emerald-400 rounded-full animate-ping"></div>
-                                <div>
-                                    <p className="text-[10px] opacity-70 leading-none">雲端連線中</p>
-                                    <p className="text-xs font-bold">Order-718b1 專案</p>
-                                </div>
-                            </div>
-                            <div className="text-[9px] font-mono opacity-50 bg-black/20 px-2 py-1 rounded">UID: {user?.uid.slice(0,8)}</div>
-                        </div>
-                    </footer>
+  return (
+    <div className="min-h-screen bg-slate-50 pb-24 text-slate-900">
+      <header className="bg-white border-b sticky top-0 z-20">
+        <div className="max-w-xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white"><LayoutDashboard size={18} /></div>
+            <h1 className="font-bold">盤點助手</h1>
+          </div>
+          <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className={`p-2 rounded-xl ${isSettingsOpen ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400'}`}><Settings size={22} /></button>
+        </div>
+      </header>
+
+      <main className="max-w-xl mx-auto p-4 space-y-4">
+        <div className="flex p-1 bg-slate-200 rounded-xl">
+          {['weekday', 'weekend'].map(m => (
+            <button key={m} onClick={() => setDayMode(m)} className={`flex-1 py-2 text-sm font-bold rounded-lg ${dayMode === m ? 'bg-white shadow text-indigo-600' : 'text-slate-500'}`}>
+              {m === 'weekday' ? '平日' : '假日'}模式
+            </button>
+          ))}
+        </div>
+
+        {!isSettingsOpen ? (
+          <div className="space-y-2">
+            {items.map(item => (
+              <div key={item.id} className="bg-white p-4 rounded-2xl border flex items-center justify-between">
+                <div>
+                  <div className="font-bold">{item.name}</div>
+                  <div className="text-xs text-slate-400">目標: {dayMode === 'weekday' ? item.weekdayTarget : item.weekendTarget} {item.unit}</div>
                 </div>
-            );
-        };
+                <div className="flex items-center gap-4">
+                  <SafeInput 
+                    type="number"
+                    value={item.currentStock}
+                    onSave={(val) => updateItem(item.id, 'currentStock', val)}
+                    className="w-20 text-center py-2 bg-slate-50 rounded-xl font-bold text-indigo-600 border-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <div className="w-8 text-right font-bold text-orange-500">{calculateOrder(item) > 0 ? `+${calculateOrder(item)}` : ''}</div>
+                </div>
+              </div>
+            ))}
+            {summaryText && (
+              <div className="mt-8 bg-slate-900 rounded-2xl p-4 text-white">
+                <div className="flex justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-400">今日叫貨預估</span>
+                  <button onClick={copyToClipboard} className="text-xs bg-white/10 px-2 py-1 rounded">{copySuccess ? '已複製' : '複製'}</button>
+                </div>
+                <pre className="text-sm font-sans">{summaryText}</pre>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <button onClick={addItem} className="w-full py-3 border-2 border-dashed border-slate-300 rounded-2xl text-slate-400 font-bold hover:bg-slate-100 flex items-center justify-center gap-2"><Plus size={18}/> 新增項目</button>
+            {items.map(item => (
+              <div key={item.id} className="bg-white p-4 rounded-2xl border space-y-3">
+                <div className="flex gap-2">
+                  <SafeInput 
+                    value={item.name}
+                    onSave={(val) => updateItem(item.id, 'name', val)}
+                    placeholder="項目名稱"
+                    className="flex-1 bg-slate-50 p-2 rounded-lg font-bold border-none"
+                  />
+                  <SafeInput 
+                    value={item.unit}
+                    onSave={(val) => updateItem(item.id, 'unit', val)}
+                    placeholder="單位"
+                    className="w-16 bg-slate-50 p-2 rounded-lg text-center border-none"
+                  />
+                  <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300 hover:text-red-500"><Trash2 size={18}/></button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-bold ml-1">平日目標</label>
+                    <SafeInput type="number" value={item.weekdayTarget} onSave={(val) => updateItem(item.id, 'weekdayTarget', val)} className="w-full bg-slate-50 p-2 rounded-lg border-none" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-bold ml-1">假日目標</label>
+                    <SafeInput type="number" value={item.weekendTarget} onSave={(val) => updateItem(item.id, 'weekendTarget', val)} className="w-full bg-slate-50 p-2 rounded-lg border-none" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white/80 backdrop-blur px-4 py-2 rounded-full border shadow-lg text-[10px] text-slate-400 font-bold flex items-center gap-2">
+        <div className="w-1.5 h-1.5 bg-green-500 rounded-full" /> 資料已實時同步
+      </div>
+    </div>
+  );
+};
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+export default App;
