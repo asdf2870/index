@@ -4,270 +4,179 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>簡約盤點叫貨系統</title>
+
 <script src="https://cdn.tailwindcss.com"></script>
-<!-- Firebase CDN -->
-<script src="https://www.gstatic.com/firebasejs/10.6.1/firebase-app.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.6.1/firebase-firestore.js"></script>
+
+<!-- Firebase CDN（非 module，關鍵） -->
+<script src="https://www.gstatic.com/firebasejs/10.6.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.6.1/firebase-firestore-compat.js"></script>
+
 <style>
-body { background-color: #f4f7f6; color: #2d3436; }
-.card { background:white; border-radius:12px; box-shadow:0 4px 6px -1px rgba(0,0,0,.1),0 2px 4px -1px rgba(0,0,0,.06); }
-input:focus { outline:none; border-color:#0984e3; box-shadow:0 0 0 2px rgba(9,132,227,.1);}
-.btn-mode-active { background-color:#0984e3; color:white; }
-.btn-mode-inactive { background-color:#dfe6e9; color:#636e72; }
-.tab-active { border-bottom:3px solid #0984e3; color:#0984e3; font-weight:bold; }
+body { background:#f4f7f6; }
+.card { background:white; border-radius:12px; box-shadow:0 4px 6px rgba(0,0,0,.1); }
 .hidden { display:none; }
-input::-webkit-outer-spin-button,input::-webkit-inner-spin-button {-webkit-appearance:none; margin:0;}
 </style>
 </head>
+
 <body class="p-4 md:p-8">
 <div class="max-w-4xl mx-auto">
-    <h1 class="text-3xl font-bold text-center mb-6 text-slate-800">盤點叫貨系統</h1>
 
-    <!-- 分頁 -->
-    <div class="flex justify-center mb-8 border-b border-slate-200">
-        <button id="tabInventory" onclick="switchTab('inventory')" class="px-8 py-3 transition tab-active">盤點叫貨</button>
-        <button id="tabSettings" onclick="switchTab('settings')" class="px-8 py-3 transition text-slate-500">品項設定</button>
-    </div>
+<h1 class="text-3xl font-bold text-center mb-6">盤點叫貨系統</h1>
 
-    <!-- 盤點區域 -->
-    <div id="pageInventory">
-        <div class="card p-6 mb-8">
-            <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-                <h2 class="text-xl font-semibold text-slate-700">今日庫存盤點</h2>
-                <div class="flex p-1 bg-slate-100 rounded-lg">
-                    <button id="btnWeekday" onclick="setMode('weekday')" class="px-6 py-2 rounded-md font-medium btn-mode-active transition">一至五 (平日)</button>
-                    <button id="btnSaturday" onclick="setMode('saturday')" class="px-6 py-2 rounded-md font-medium btn-mode-inactive transition">星期六</button>
-                </div>
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="inventoryContainer"></div>
-        </div>
-        <div class="card p-6 border-t-4 border-blue-500">
-            <h2 class="text-xl font-semibold mb-4 text-slate-700">叫貨清單統計</h2>
-            <div id="summaryContent" class="bg-slate-50 p-4 rounded-lg min-h-[100px] mb-4 text-slate-700 whitespace-pre-wrap leading-relaxed">
-                尚無叫貨項目
-            </div>
-            <button onclick="copySummary()" class="w-full py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition active:scale-[0.98] shadow-md">
-                一鍵複製叫貨清單
-            </button>
-        </div>
-    </div>
+<div class="flex justify-center mb-6 border-b">
+<button id="tabInventory" onclick="switchTab('inventory')" class="px-6 py-3 border-b-4 border-blue-500 font-bold">盤點</button>
+<button id="tabSettings" onclick="switchTab('settings')" class="px-6 py-3 text-slate-400">品項設定</button>
+</div>
 
-    <!-- 設定區域 -->
-    <div id="pageSettings" class="hidden">
-        <div class="card p-6 mb-8">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-xl font-semibold text-slate-700">品項與庫存設定</h2>
-            </div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-left">
-                    <thead>
-                        <tr class="border-b text-slate-500 text-sm">
-                            <th class="py-3 px-1">品項名稱</th>
-                            <th class="py-3 px-1 w-20">平日應備</th>
-                            <th class="py-3 px-1 w-20">週六應備</th>
-                            <th class="py-3 px-1 w-16 text-center">進位</th>
-                            <th class="py-3 px-1 w-20">單位</th>
-                            <th class="py-3 px-1 w-12 text-center">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="settingList"></tbody>
-                </table>
-            </div>
-            <button onclick="addItem()" class="mt-6 px-6 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition shadow-sm">
-                + 新增品項
-            </button>
-        </div>
-    </div>
+<!-- 盤點 -->
+<div id="pageInventory">
+<div class="card p-6 mb-6">
+<div class="flex justify-between mb-4">
+<h2 class="font-bold">庫存盤點</h2>
+<div>
+<button onclick="setMode('weekday')" id="btnWeekday" class="px-4 py-1 bg-blue-500 text-white rounded">平日</button>
+<button onclick="setMode('saturday')" id="btnSaturday" class="px-4 py-1 bg-slate-200 rounded">週六</button>
+</div>
+</div>
+
+<div id="inventoryContainer" class="grid md:grid-cols-2 gap-4"></div>
+</div>
+
+<div class="card p-6">
+<h2 class="font-bold mb-2">叫貨清單</h2>
+<pre id="summaryContent" class="bg-slate-100 p-3 rounded min-h-[80px]">尚無叫貨項目</pre>
+<button onclick="copySummary()" class="w-full mt-3 bg-blue-600 text-white py-2 rounded">一鍵複製</button>
+</div>
+</div>
+
+<!-- 設定 -->
+<div id="pageSettings" class="hidden">
+<div class="card p-6">
+<table class="w-full">
+<thead>
+<tr class="border-b">
+<th>品項</th><th>平日</th><th>週六</th><th>進位</th><th>單位</th><th></th>
+</tr>
+</thead>
+<tbody id="settingList"></tbody>
+</table>
+
+<button onclick="addItem()" class="mt-4 bg-slate-800 text-white px-4 py-2 rounded">
+＋ 新增品項
+</button>
+</div>
+</div>
+
 </div>
 
 <script>
-// Firebase 初始化
-const firebaseConfig = {
-  apiKey: "AIzaSyCiWs5ZtstLxSSLQHufvnrWilnnGADFbEI",
-  authDomain: "ngdd-8dd14.firebaseapp.com",
-  projectId: "ngdd-8dd14",
-  storageBucket: "ngdd-8dd14.firebasestorage.app",
-  messagingSenderId: "780195335307",
-  appId: "1:780195335307:web:c6e95d1e0a7ee92cf3588e"
-};
-firebase.initializeApp(firebaseConfig);
+// 🔥 Firebase 初始化
+firebase.initializeApp({
+ apiKey: "AIzaSyCiWs5ZtstLxSSLQHufvnrWilnnGADFbEI",
+ authDomain: "ngdd-8dd14.firebaseapp.com",
+ projectId: "ngdd-8dd14"
+});
 const db = firebase.firestore();
 
+// ===== 資料 =====
 let items = [];
 let currentMode = 'weekday';
-let currentStocks = {};
-let needs = {};
+const currentStocks = {};
+const needs = {};
 
-// 初始載入
-function init() {
-    db.collection('items').get().then(snapshot=>{
-        snapshot.forEach(doc=>items.push(doc.data()));
-        if(items.length===0){
-            items=[{id:1,name:'雞蛋',weekday:10,saturday:15,unit:'箱',round:false},{id:2,name:'麵粉',weekday:5.5,saturday:8,unit:'包',round:true}];
-            items.forEach(i=>db.collection('items').doc(i.id.toString()).set(i));
-        }
-        renderSettings();
-        renderInventory();
-    });
-}
+// ===== Firebase 即時同步 =====
+db.collection('items').onSnapshot(snap=>{
+ items = snap.docs.map(d=>({id:d.id,...d.data()}));
+ renderSettings();
+ renderInventory();
+});
 
-// 分頁切換
+// ===== 功能 =====
 function switchTab(tab){
-    document.getElementById('pageInventory').classList.toggle('hidden',tab!=='inventory');
-    document.getElementById('pageSettings').classList.toggle('hidden',tab!=='settings');
-    document.getElementById('tabInventory').className = tab==='inventory'?'px-8 py-3 transition tab-active':'px-8 py-3 transition text-slate-500';
-    document.getElementById('tabSettings').className = tab==='settings'?'px-8 py-3 transition tab-active':'px-8 py-3 transition text-slate-500';
+ document.getElementById('pageInventory').classList.toggle('hidden',tab!=='inventory');
+ document.getElementById('pageSettings').classList.toggle('hidden',tab!=='settings');
 }
 
-// 模式切換
 function setMode(mode){
-    currentMode=mode;
-    document.getElementById('btnWeekday').className=mode==='weekday'?'px-6 py-2 rounded-md font-medium btn-mode-active transition':'px-6 py-2 rounded-md font-medium btn-mode-inactive transition';
-    document.getElementById('btnSaturday').className=mode==='saturday'?'px-6 py-2 rounded-md font-medium btn-mode-active transition':'px-6 py-2 rounded-md font-medium btn-mode-inactive transition';
-    renderInventory();
+ currentMode = mode;
+ renderInventory();
 }
 
-// 設定頁渲染
-function renderSettings(){
-    const container=document.getElementById('settingList');
-    container.innerHTML='';
-    items.forEach(item=>{
-        const tr=document.createElement('tr');
-        tr.className='border-b last:border-0 hover:bg-slate-50 transition';
-        tr.innerHTML=`
-            <td class="py-3 px-1"><input type="text" value="${item.name}" oninput="updateItemData(${item.id},'name',this.value)" class="w-full border border-slate-200 rounded p-1.5 text-sm"></td>
-            <td class="py-3 px-1"><input type="number" step="0.1" value="${item.weekday}" oninput="updateItemData(${item.id},'weekday',this.value)" class="w-full border border-slate-200 rounded p-1.5 text-sm"></td>
-            <td class="py-3 px-1"><input type="number" step="0.1" value="${item.saturday}" oninput="updateItemData(${item.id},'saturday',this.value)" class="w-full border border-slate-200 rounded p-1.5 text-sm"></td>
-            <td class="py-3 px-1 text-center"><input type="checkbox" ${item.round?'checked':''} onchange="updateItemData(${item.id},'round',this.checked)" class="w-4 h-4 mt-2"></td>
-            <td class="py-3 px-1"><input type="text" value="${item.unit}" oninput="updateItemData(${item.id},'unit',this.value)" placeholder="單位" class="w-full border border-slate-200 rounded p-1.5 text-sm"></td>
-            <td class="py-3 px-1 text-center"><button onclick="deleteItem(${item.id})" class="text-red-400 hover:text-red-600 text-2xl font-bold transition">&times;</button></td>
-        `;
-        container.appendChild(tr);
-    });
-}
-
-// 新增品項
 function addItem(){
-    const newId=Date.now();
-    const newItem={id:newId,name:'',weekday:0,saturday:0,unit:'',round:false};
-    items.push(newItem); // 先更新陣列
-    renderSettings(); // 立即渲染
-    db.collection('items').doc(newId.toString()).set(newItem) // 同步 Firebase
-      .then(()=>console.log('新增品項同步完成'))
-      .catch(err=>console.error('Firebase 新增品項失敗',err));
+ const id = Date.now().toString();
+ const item = { name:'', weekday:0, saturday:0, unit:'', round:false, currentStock:0 };
+ db.collection('items').doc(id).set(item);
 }
 
-// 刪除品項
 function deleteItem(id){
-    items=items.filter(i=>i.id!==id);
-    delete needs[id]; delete currentStocks[id];
-    db.collection('items').doc(id.toString()).delete();
-    renderSettings();
-    renderInventory();
+ db.collection('items').doc(id).delete();
 }
 
-// 更新資料
-function updateItemData(id,field,value){
-    const item=items.find(i=>i.id===id);
-    if(!item) return;
-    if(field==='weekday'||field==='saturday'){item[field]=parseFloat(value)||0;}
-    else if(field==='round'){item[field]=value;}
-    else{item[field]=value;}
-    db.collection('items').doc(id.toString()).set(item);
-    renderInventory();
+function updateItemData(id, field, value){
+ if(field==='weekday'||field==='saturday'||field==='currentStock'){
+   value = parseFloat(value)||0;
+ }
+ db.collection('items').doc(id).update({[field]:value});
 }
 
-// 盤點頁渲染
+// ===== Render =====
+function renderSettings(){
+ const el=document.getElementById('settingList');
+ el.innerHTML='';
+ items.forEach(i=>{
+ el.innerHTML+=`
+<tr class="border-b">
+<td><input value="${i.name}" oninput="updateItemData('${i.id}','name',this.value)"></td>
+<td><input type="number" value="${i.weekday}" oninput="updateItemData('${i.id}','weekday',this.value)"></td>
+<td><input type="number" value="${i.saturday}" oninput="updateItemData('${i.id}','saturday',this.value)"></td>
+<td><input type="checkbox" ${i.round?'checked':''} onchange="updateItemData('${i.id}','round',this.checked)"></td>
+<td><input value="${i.unit}" oninput="updateItemData('${i.id}','unit',this.value)"></td>
+<td><button onclick="deleteItem('${i.id}')" class="text-red-500">✕</button></td>
+</tr>`;
+ });
+}
+
 function renderInventory(){
-    const container=document.getElementById('inventoryContainer');
-    container.innerHTML='';
-    items.forEach(item=>{
-        if(!item.name) return;
-        let target=currentMode==='weekday'?item.weekday:item.saturday;
-        if(item.round) target=Math.round(target);
-        const currentVal=currentStocks[item.id]||0;
-
-        const div=document.createElement('div');
-        div.className='flex flex-col p-4 bg-slate-50 border border-slate-200 rounded-lg shadow-sm';
-        div.innerHTML=`
-            <div class="flex justify-between items-center mb-3">
-                <span class="font-bold text-lg text-slate-700">${item.name}</span>
-                <span class="text-xs bg-white px-2 py-1 rounded-full border border-slate-200 text-slate-500 font-medium">應備: ${target} ${item.unit}</span>
-            </div>
-            <div class="flex items-center space-x-2">
-                <div class="flex flex-1 items-center bg-white border border-slate-300 rounded-md overflow-hidden focus-within:border-blue-500 transition">
-                    <button onclick="adjustStock(${item.id},-0.5,${target})" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold transition">-</button>
-                    <input type="number" step="0.5" id="input-${item.id}" value="${currentVal===0?'':currentVal}" placeholder="0" oninput="manualInput(${item.id},this.value,${target})" class="w-full text-center p-2 border-none">
-                    <button onclick="adjustStock(${item.id},0.5,${target})" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold transition">+</button>
-                </div>
-                <div class="text-right min-w-[80px]">
-                    <span class="text-[10px] text-slate-400 block uppercase font-bold tracking-wider">需叫貨</span>
-                    <span id="need-${item.id}" class="font-bold text-blue-600 text-xl">${calculateNeedValue(currentVal,target)}</span>
-                    <span class="text-xs text-slate-500 font-medium">${item.unit}</span>
-                </div>
-            </div>
-        `;
-        container.appendChild(div);
-        calculateNeed(item.id,currentVal,target);
-    });
-    updateSummary();
+ const el=document.getElementById('inventoryContainer');
+ el.innerHTML='';
+ needsClear();
+ items.forEach(i=>{
+ if(!i.name) return;
+ const target = currentMode==='weekday'?i.weekday:i.saturday;
+ const stock = i.currentStock||0;
+ const need = Math.max(0,target-stock);
+ if(need>0) needs[i.id]=`${i.name}: ${need} ${i.unit}`;
+ el.innerHTML+=`
+<div class="p-4 bg-slate-100 rounded">
+<b>${i.name}</b><br>
+<input type="number" value="${stock}" oninput="updateItemData('${i.id}','currentStock',this.value)">
+<div class="text-blue-600 font-bold">需補 ${need} ${i.unit}</div>
+</div>`;
+ });
+ updateSummary();
 }
 
-// 調整庫存
-function adjustStock(id,delta,target){
-    const input=document.getElementById(`input-${id}`);
-    let val=parseFloat(input.value)||0;
-    val=Math.max(0,val+delta);
-    input.value=val;
-    manualInput(id,val,target);
-}
-
-function manualInput(id,stock,target){
-    const currentStock=parseFloat(stock)||0;
-    currentStocks[id]=currentStock;
-    calculateNeed(id,currentStock,target);
-}
-
-function calculateNeedValue(stock,target){
-    let result=target-stock;
-    result=result>0?result:0;
-    return Number.isInteger(result)?result:result.toFixed(1);
-}
-
-function calculateNeed(id,currentStock,target){
-    let result=target-currentStock; result=result>0?result:0;
-    const displayResult=Number.isInteger(result)?result:result.toFixed(1);
-    const needEl=document.getElementById(`need-${id}`);
-    if(needEl) needEl.innerText=displayResult;
-    if(result>0){ const item=items.find(i=>i.id===id); needs[id]=`${item.name}: ${displayResult} ${item.unit}`; }
-    else{ delete needs[id]; }
-    updateSummary();
-}
+function needsClear(){ for(let k in needs) delete needs[k]; }
 
 function updateSummary(){
-    const summaryBox=document.getElementById('summaryContent');
-    const needList=Object.values(needs);
-    if(needList.length===0){ summaryBox.innerText='尚無叫貨項目'; return; }
-    const today=new Date();
-    const dateStr=`${today.getMonth()+1}/${today.getDate()}`;
-    const modeName=currentMode==='weekday'?'平日':'週六';
-    const header=`【${dateStr} ${modeName} 叫貨清單】\n`;
-    summaryBox.innerText=header+needList.join('\n');
+ const box=document.getElementById('summaryContent');
+ const list=Object.values(needs);
+ box.textContent=list.length?list.join('\n'):'尚無叫貨項目';
 }
 
 function copySummary(){
-    const content=document.getElementById('summaryContent').innerText;
-    if(content==='尚無叫貨項目'){ alert('目前沒有需要叫貨的項目內容'); return; }
-    const textArea=document.createElement("textarea");
-    textArea.value=content;
-    document.body.appendChild(textArea);
-    textArea.select();
-    document.execCommand('copy');
-    document.body.removeChild(textArea);
-    alert('已複製清單到剪貼簿！');
+ navigator.clipboard.writeText(document.getElementById('summaryContent').textContent);
+ alert('已複製');
 }
 
-init();
+// ===== 掛到 window（關鍵）=====
+window.switchTab = switchTab;
+window.setMode = setMode;
+window.addItem = addItem;
+window.deleteItem = deleteItem;
+window.updateItemData = updateItemData;
+window.copySummary = copySummary;
 </script>
+
 </body>
 </html>
