@@ -81,6 +81,7 @@ input::-webkit-outer-spin-button,input::-webkit-inner-spin-button {-webkit-appea
 </div>
 
 <script>
+// Firebase 初始化
 const firebaseConfig = {
   apiKey: "AIzaSyCiWs5ZtstLxSSLQHufvnrWilnnGADFbEI",
   authDomain: "ngdd-8dd14.firebaseapp.com",
@@ -92,17 +93,16 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// 初始資料
 let items = [];
 let currentMode = 'weekday';
 let currentStocks = {};
 let needs = {};
 
+// 初始載入
 function init() {
-    db.collection('items').get().then(snapshot => {
-        snapshot.forEach(doc => items.push(doc.data()));
+    db.collection('items').get().then(snapshot=>{
+        snapshot.forEach(doc=>items.push(doc.data()));
         if(items.length===0){
-            // 建立預設品項
             items=[{id:1,name:'雞蛋',weekday:10,saturday:15,unit:'箱',round:false},{id:2,name:'麵粉',weekday:5.5,saturday:8,unit:'包',round:true}];
             items.forEach(i=>db.collection('items').doc(i.id.toString()).set(i));
         }
@@ -150,9 +150,11 @@ function renderSettings(){
 function addItem(){
     const newId=Date.now();
     const newItem={id:newId,name:'',weekday:0,saturday:0,unit:'',round:false};
-    items.push(newItem);
-    db.collection('items').doc(newId.toString()).set(newItem);
-    renderSettings();
+    items.push(newItem); // 先更新陣列
+    renderSettings(); // 立即渲染
+    db.collection('items').doc(newId.toString()).set(newItem) // 同步 Firebase
+      .then(()=>console.log('新增品項同步完成'))
+      .catch(err=>console.error('Firebase 新增品項失敗',err));
 }
 
 // 刪除品項
@@ -164,7 +166,7 @@ function deleteItem(id){
     renderInventory();
 }
 
-// 更新品項資料
+// 更新資料
 function updateItemData(id,field,value){
     const item=items.find(i=>i.id===id);
     if(!item) return;
@@ -242,7 +244,6 @@ function calculateNeed(id,currentStock,target){
     updateSummary();
 }
 
-// 更新統計
 function updateSummary(){
     const summaryBox=document.getElementById('summaryContent');
     const needList=Object.values(needs);
@@ -254,7 +255,6 @@ function updateSummary(){
     summaryBox.innerText=header+needList.join('\n');
 }
 
-// 複製統計
 function copySummary(){
     const content=document.getElementById('summaryContent').innerText;
     if(content==='尚無叫貨項目'){ alert('目前沒有需要叫貨的項目內容'); return; }
