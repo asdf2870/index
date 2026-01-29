@@ -2,13 +2,14 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Plus, 
   Trash2, 
-  Clipboard, 
   Settings, 
   LayoutDashboard, 
   Loader2,
   AlertCircle,
-  CheckCircle2,
-  Save
+  Copy,
+  Check,
+  ChevronRight,
+  ChevronLeft
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -19,7 +20,8 @@ import {
   updateDoc, 
   deleteDoc, 
   query, 
-  addDoc
+  addDoc,
+  setDoc
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -28,25 +30,26 @@ import {
   onAuthStateChanged 
 } from 'firebase/auth';
 
-// --- 初始化 Firebase ---
+// --- Firebase 初始化 ---
 const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'simple-stock-app';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'stock-master-v2';
 
-// 自定義輸入組件，防止注音輸入法被中斷
+// 解決注音輸入問題的受控組件
 const SafeInput = ({ value, onSave, className, placeholder, type = "text" }) => {
-  const [localValue, setLocalValue] = useState(value);
+  const [localValue, setLocalValue] = useState(value ?? '');
   const isComposing = useRef(false);
 
   useEffect(() => {
-    setLocalValue(value);
+    setLocalValue(value ?? '');
   }, [value]);
 
   const handleBlur = () => {
     if (localValue !== value) {
-      onSave(type === "number" ? parseFloat(localValue) || 0 : localValue);
+      const finalValue = type === "number" ? (parseFloat(localValue) || 0) : localValue;
+      onSave(finalValue);
     }
   };
 
@@ -78,10 +81,12 @@ const App = () => {
   const [items, setItems] = useState([]);
   const [user, setUser] = useState(null);
   const [dayMode, setDayMode] = useState('weekday'); 
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [view, setView] = useState('inventory'); // 'inventory' or 'settings'
+  const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
   const [copySuccess, setCopySuccess] = useState(false);
 
+  // 1. 處理身份驗證
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -91,21 +96,32 @@ const App = () => {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        setAuthError("連線失敗：請確保 Firebase 已啟用匿名登入。");
+        console.error("Auth error:", err);
+        setAuthError("連線失敗：請確保 Firebase 已啟用「匿名登入」功能。");
       }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    const unsubscribe = onAuthStateChanged(auth, (currUser) => {
+      setUser(currUser);
+      if (!currUser) setLoading(false);
+    });
     return () => unsubscribe();
   }, []);
 
+  // 2. 監聽 Firestore 資料
   useEffect(() => {
     if (!user) return;
+    setLoading(true);
     const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setItems(data.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)));
-    }, (err) => console.error(err));
+      setLoading(false);
+    }, (err) => {
+      console.error("Firestore error:", err);
+      setAuthError("資料讀取失敗，請檢查資料庫規則設定。");
+      setLoading(false);
+    });
     return () => unsubscribe();
   }, [user]);
 
@@ -114,18 +130,17 @@ const App = () => {
       const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id);
       await updateDoc(itemRef, { [field]: value });
     } catch (err) {
-      console.error(err);
+      console.error("Update error:", err);
     }
   };
 
   const addItem = async () => {
     const newItem = {
-      name: '新項目',
+      name: '',
       unit: '份',
       weekdayTarget: 10,
       weekendTarget: 15,
       currentStock: 0,
-      roundUp: true,
       createdAt: Date.now()
     };
     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), newItem);
@@ -138,16 +153,15 @@ const App = () => {
   const calculateOrder = (item) => {
     const target = dayMode === 'weekday' ? (item.weekdayTarget || 0) : (item.weekendTarget || 0);
     const diff = target - (item.currentStock || 0);
-    if (diff <= 0) return 0;
-    return item.roundUp ? Math.ceil(diff) : diff;
+    return diff > 0 ? Math.ceil(diff) : 0;
   };
 
   const summaryText = useMemo(() => {
-    return items
+    const lines = items
       .map(i => ({ name: i.name, qty: calculateOrder(i), unit: i.unit }))
-      .filter(i => i.qty > 0)
-      .map(i => `${i.name}: ${i.qty} ${i.unit}`)
-      .join('\n');
+      .filter(i => i.qty > 0 && i.name)
+      .map(i => `${i.name}: ${i.qty} ${i.unit}`);
+    return lines.length > 0 ? `【${dayMode === 'weekday' ? '平日' : '假日'}叫貨清單】\n` + lines.join('\n') : "";
   }, [items, dayMode]);
 
   const copyToClipboard = () => {
@@ -162,101 +176,218 @@ const App = () => {
   };
 
   if (authError) return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center">
-      <AlertCircle className="w-12 h-12 text-red-500 mb-2" />
-      <p>{authError}</p>
+    <div className="min-h-screen flex flex-col items-center justify-center p-8 text-center bg-slate-50">
+      <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4 text-red-500">
+        <AlertCircle size={32} />
+      </div>
+      <h2 className="text-xl font-bold mb-2">連線發生問題</h2>
+      <p className="text-slate-500 mb-6 max-w-xs">{authError}</p>
+      <button onClick={() => window.location.reload()} className="px-6 py-2 bg-indigo-600 text-white rounded-full font-bold">重新整理</button>
     </div>
   );
 
-  if (!user) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <Loader2 className="animate-spin text-indigo-600" size={32} />
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-24 text-slate-900">
-      <header className="bg-white border-b sticky top-0 z-20">
-        <div className="max-w-xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white"><LayoutDashboard size={18} /></div>
-            <h1 className="font-bold">盤點助手</h1>
+    <div className="min-h-screen bg-[#F8FAFC] pb-20 font-sans">
+      {/* 頂部導覽列 */}
+      <header className="bg-white border-b sticky top-0 z-30">
+        <div className="max-w-md mx-auto px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-indigo-200 shadow-lg">
+              <LayoutDashboard size={20} />
+            </div>
+            <span className="font-extrabold text-lg tracking-tight">盤點大師</span>
           </div>
-          <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className={`p-2 rounded-xl ${isSettingsOpen ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400'}`}><Settings size={22} /></button>
+          <button 
+            onClick={() => setView(view === 'inventory' ? 'settings' : 'inventory')}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-bold transition-all ${
+              view === 'settings' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'
+            }`}
+          >
+            <Settings size={16} />
+            {view === 'settings' ? '完成設定' : '品項設定'}
+          </button>
         </div>
       </header>
 
-      <main className="max-w-xl mx-auto p-4 space-y-4">
-        <div className="flex p-1 bg-slate-200 rounded-xl">
-          {['weekday', 'weekend'].map(m => (
-            <button key={m} onClick={() => setDayMode(m)} className={`flex-1 py-2 text-sm font-bold rounded-lg ${dayMode === m ? 'bg-white shadow text-indigo-600' : 'text-slate-500'}`}>
-              {m === 'weekday' ? '平日' : '假日'}模式
-            </button>
-          ))}
-        </div>
+      <main className="max-w-md mx-auto p-4 space-y-4">
+        {view === 'inventory' ? (
+          <>
+            {/* 模式切換器 */}
+            <div className="grid grid-cols-2 p-1.5 bg-slate-200/60 rounded-2xl backdrop-blur-sm">
+              <button 
+                onClick={() => setDayMode('weekday')}
+                className={`py-2.5 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${
+                  dayMode === 'weekday' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'
+                }`}
+              >
+                平日模式
+              </button>
+              <button 
+                onClick={() => setDayMode('weekend')}
+                className={`py-2.5 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${
+                  dayMode === 'weekend' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'
+                }`}
+              >
+                假日模式
+              </button>
+            </div>
 
-        {!isSettingsOpen ? (
-          <div className="space-y-2">
-            {items.map(item => (
-              <div key={item.id} className="bg-white p-4 rounded-2xl border flex items-center justify-between">
-                <div>
-                  <div className="font-bold">{item.name}</div>
-                  <div className="text-xs text-slate-400">目標: {dayMode === 'weekday' ? item.weekdayTarget : item.weekendTarget} {item.unit}</div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <SafeInput 
-                    type="number"
-                    value={item.currentStock}
-                    onSave={(val) => updateItem(item.id, 'currentStock', val)}
-                    className="w-20 text-center py-2 bg-slate-50 rounded-xl font-bold text-indigo-600 border-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <div className="w-8 text-right font-bold text-orange-500">{calculateOrder(item) > 0 ? `+${calculateOrder(item)}` : ''}</div>
-                </div>
+            {/* 庫存清單 */}
+            <div className="space-y-3">
+              <div className="flex text-[11px] font-black text-slate-400 px-4 uppercase tracking-wider">
+                <span className="flex-1">品項 / 目標</span>
+                <span className="w-24 text-center">目前庫存</span>
+                <span className="w-16 text-right text-orange-500">需補</span>
               </div>
-            ))}
-            {summaryText && (
-              <div className="mt-8 bg-slate-900 rounded-2xl p-4 text-white">
-                <div className="flex justify-between mb-2">
-                  <span className="text-xs font-bold text-slate-400">今日叫貨預估</span>
-                  <button onClick={copyToClipboard} className="text-xs bg-white/10 px-2 py-1 rounded">{copySuccess ? '已複製' : '複製'}</button>
+              
+              {items.length === 0 ? (
+                <div className="bg-white rounded-3xl p-10 text-center border border-dashed">
+                  <p className="text-slate-400 text-sm">尚未加入任何品項</p>
+                  <button onClick={() => setView('settings')} className="mt-2 text-indigo-600 font-bold text-sm underline">前往設定</button>
                 </div>
-                <pre className="text-sm font-sans">{summaryText}</pre>
+              ) : (
+                items.map(item => {
+                  const order = calculateOrder(item);
+                  const target = dayMode === 'weekday' ? item.weekdayTarget : item.weekendTarget;
+                  return (
+                    <div key={item.id} className="bg-white px-4 py-4 rounded-3xl border border-slate-100 shadow-sm flex items-center transition-active active:scale-[0.98]">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-slate-800 truncate">{item.name || '未命名'}</div>
+                        <div className="text-[10px] text-slate-400 font-medium">目標: {target} {item.unit}</div>
+                      </div>
+                      <div className="w-24 flex justify-center">
+                        <SafeInput 
+                          type="number"
+                          value={item.currentStock}
+                          onSave={(val) => updateItem(item.id, 'currentStock', val)}
+                          className="w-16 text-center py-2 bg-slate-50 rounded-xl font-black text-indigo-600 focus:bg-white focus:ring-2 focus:ring-indigo-500 border-none transition-all"
+                        />
+                      </div>
+                      <div className="w-16 text-right">
+                        {order > 0 ? (
+                          <div className="inline-flex items-center px-2 py-1 bg-orange-50 text-orange-600 rounded-lg text-sm font-black italic">
+                            +{order}
+                          </div>
+                        ) : (
+                          <div className="text-slate-300"><Check size={16} className="inline"/></div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* 叫貨清單摘要 */}
+            {summaryText && (
+              <div className="mt-8 overflow-hidden rounded-3xl border border-slate-900/5 shadow-2xl shadow-indigo-900/10">
+                <div className="bg-slate-900 p-4 flex justify-between items-center">
+                  <div className="flex items-center gap-2 text-white">
+                    <Copy size={16} className="text-indigo-400"/>
+                    <span className="text-xs font-black tracking-widest uppercase">叫貨預估清單</span>
+                  </div>
+                  <button 
+                    onClick={copyToClipboard}
+                    className={`text-[10px] font-bold px-3 py-1 rounded-full flex items-center gap-1 transition-all ${
+                      copySuccess ? 'bg-green-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'
+                    }`}
+                  >
+                    {copySuccess ? <><Check size={12}/> 已複製</> : '複製文字'}
+                  </button>
+                </div>
+                <div className="bg-slate-800 p-5 font-mono text-sm leading-relaxed text-indigo-100 whitespace-pre-wrap">
+                  {summaryText}
+                </div>
               </div>
             )}
-          </div>
+          </>
         ) : (
-          <div className="space-y-4">
-            <button onClick={addItem} className="w-full py-3 border-2 border-dashed border-slate-300 rounded-2xl text-slate-400 font-bold hover:bg-slate-100 flex items-center justify-center gap-2"><Plus size={18}/> 新增項目</button>
-            {items.map(item => (
-              <div key={item.id} className="bg-white p-4 rounded-2xl border space-y-3">
-                <div className="flex gap-2">
-                  <SafeInput 
-                    value={item.name}
-                    onSave={(val) => updateItem(item.id, 'name', val)}
-                    placeholder="項目名稱"
-                    className="flex-1 bg-slate-50 p-2 rounded-lg font-bold border-none"
-                  />
-                  <SafeInput 
-                    value={item.unit}
-                    onSave={(val) => updateItem(item.id, 'unit', val)}
-                    placeholder="單位"
-                    className="w-16 bg-slate-50 p-2 rounded-lg text-center border-none"
-                  />
-                  <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300 hover:text-red-500"><Trash2 size={18}/></button>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-[10px] text-slate-400 font-bold ml-1">平日目標</label>
-                    <SafeInput type="number" value={item.weekdayTarget} onSave={(val) => updateItem(item.id, 'weekdayTarget', val)} className="w-full bg-slate-50 p-2 rounded-lg border-none" />
+          /* 設定頁面 */
+          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
+            <div className="flex items-center justify-between px-2">
+              <h2 className="font-black text-xl text-slate-800">品項管理</h2>
+              <button 
+                onClick={addItem}
+                className="bg-indigo-600 text-white p-2 rounded-xl shadow-lg shadow-indigo-200 active:scale-90 transition-transform"
+              >
+                <Plus size={20}/>
+              </button>
+            </div>
+
+            <div className="space-y-3 pb-20">
+              {items.map(item => (
+                <div key={item.id} className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4">
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                       <label className="text-[10px] text-slate-400 font-black mb-1 block ml-1">品項名稱</label>
+                       <SafeInput 
+                        value={item.name}
+                        onSave={(val) => updateItem(item.id, 'name', val)}
+                        placeholder="例如：珍珠"
+                        className="w-full bg-slate-50 p-3 rounded-2xl font-bold border-none focus:ring-2 focus:ring-indigo-100"
+                      />
+                    </div>
+                    <div className="w-20">
+                       <label className="text-[10px] text-slate-400 font-black mb-1 block ml-1 text-center">單位</label>
+                       <SafeInput 
+                        value={item.unit}
+                        onSave={(val) => updateItem(item.id, 'unit', val)}
+                        placeholder="份"
+                        className="w-full bg-slate-50 p-3 rounded-2xl text-center font-bold border-none focus:ring-2 focus:ring-indigo-100"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-[10px] text-slate-400 font-bold ml-1">假日目標</label>
-                    <SafeInput type="number" value={item.weekendTarget} onSave={(val) => updateItem(item.id, 'weekendTarget', val)} className="w-full bg-slate-50 p-2 rounded-lg border-none" />
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-slate-50/50 p-3 rounded-2xl">
+                      <label className="text-[10px] text-slate-500 font-black mb-2 block text-center">平日應備</label>
+                      <SafeInput 
+                        type="number" 
+                        value={item.weekdayTarget} 
+                        onSave={(val) => updateItem(item.id, 'weekdayTarget', val)} 
+                        className="w-full bg-white p-2 rounded-xl text-center font-black text-indigo-600 border-none shadow-sm" 
+                      />
+                    </div>
+                    <div className="bg-slate-50/50 p-3 rounded-2xl">
+                      <label className="text-[10px] text-slate-500 font-black mb-2 block text-center">假日應備</label>
+                      <SafeInput 
+                        type="number" 
+                        value={item.weekendTarget} 
+                        onSave={(val) => updateItem(item.id, 'weekendTarget', val)} 
+                        className="w-full bg-white p-2 rounded-xl text-center font-black text-indigo-600 border-none shadow-sm" 
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <button 
+                      onClick={() => { if(confirm('確定要刪除嗎？')) deleteItem(item.id)}}
+                      className="text-xs text-red-400 font-bold flex items-center gap-1 hover:text-red-600"
+                    >
+                      <Trash2 size={14}/> 刪除此品項
+                    </button>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
       </main>
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white/80 backdrop-blur px-4 py-2 rounded-full border shadow-lg text-[10px] text-slate-400 font-bold flex items-center gap-2">
-        <div className="w-1.5 h-1.5 bg-green-500 rounded-full" /> 資料已實時同步
+
+      {/* 底部狀態列 */}
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-md px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-3 z-50">
+        <div className="flex items-center gap-1.5">
+          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.5)]" />
+          <span className="text-[10px] text-white/70 font-black tracking-widest uppercase">Cloud Live</span>
+        </div>
+        <div className="w-px h-3 bg-white/20" />
+        <span className="text-[10px] text-indigo-300 font-black">ID: {appId.slice(-4)}</span>
       </div>
     </div>
   );
