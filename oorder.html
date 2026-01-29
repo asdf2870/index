@@ -1,249 +1,357 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import {
-  ShoppingCart, CalendarDays, PartyPopper, Copy,
-  Plus, Trash2, CheckCircle2, Settings, Store
-} from 'lucide-react';
+import { ShoppingCart, CalendarDays, PartyPopper, ListChecks, Copy, Plus, Trash2, ArrowUpToLine, CheckCircle2, Settings, ClipboardList, RefreshCw } from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, updateDoc, deleteDoc, addDoc } from 'firebase/firestore';
 
-import {
-  collection,
-  doc,
-  onSnapshot,
-  addDoc,
-  updateDoc,
-  deleteDoc
-} from "firebase/firestore";
+// --- Firebase 配置 ---
+const firebaseConfig = {
+    apiKey: "AIzaSyDS7PQrDh05bIGu9WYCcFM0s1GvhzDwz4M",
+    authDomain: "order-718b1.firebaseapp.com",
+    projectId: "order-718b1",
+    storageBucket: "order-718b1.firebasestorage.app",
+    messagingSenderId: "454465000018",
+    appId: "1:454465000018:web:ac7c787ba3e423a2a1458b",
+    measurementId: "G-3MC1RTW85K"
+};
 
-import { db } from "./firebase";
+// 初始化 Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'order-app-v1';
 
 const App = () => {
-  const [view, setView] = useState('inventory');
-  const [dayMode, setDayMode] = useState('weekday');
-  const [stores, setStores] = useState([]);
-  const [currentStoreId, setCurrentStoreId] = useState(null);
-  const [items, setItems] = useState([]);
+    const [view, setView] = useState('inventory');
+    const [dayMode, setDayMode] = useState('weekday');
+    const [items, setItems] = useState([]);
+    const [user, setUser] = useState(null);
+    const [loading, setLoading] = useState(true);
 
-  /* ================= 店家 ================= */
+    // 1. 處理身份驗證 (Rule 3)
+    useEffect(() => {
+        const initAuth = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Auth error:", error);
+            }
+        };
+        initAuth();
+        const unsubscribe = onAuthStateChanged(auth, setUser);
+        return () => unsubscribe();
+    }, []);
 
-  const storesRef = collection(db, "stores");
+    // 2. 監聽 Firestore 數據 (Rule 1 & 2)
+    useEffect(() => {
+        if (!user) return;
 
-  useEffect(() => {
-    const unsub = onSnapshot(storesRef, snap => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setStores(data);
-      if (!currentStoreId && data.length > 0) {
-        setCurrentStoreId(data[0].id);
-      }
-    });
-    return () => unsub();
-  }, []);
+        // 使用規範的路徑存取公共資料
+        const itemsRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory_items');
+        
+        const unsubscribe = onSnapshot(itemsRef, (snapshot) => {
+            const itemsData = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            setItems(itemsData);
+            setLoading(false);
+        }, (error) => {
+            console.error("Firestore error:", error);
+            setLoading(false);
+        });
 
-  const addStore = async () => {
-    await addDoc(storesRef, { name: "新分店" });
-  };
+        return () => unsubscribe();
+    }, [user]);
 
-  const updateStoreName = async (id, name) => {
-    await updateDoc(doc(db, "stores", id), { name });
-  };
+    const updateItem = async (id, field, value) => {
+        if (!user) return;
+        try {
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory_items', id);
+            await updateDoc(docRef, { [field]: value });
+        } catch (error) {
+            console.error("Update error:", error);
+        }
+    };
 
-  const deleteStore = async (id) => {
-    if (!window.confirm("確定刪除這間店？所有品項都會消失")) return;
-    await deleteDoc(doc(db, "stores", id));
-    if (id === currentStoreId) setCurrentStoreId(null);
-  };
+    const addItem = async () => {
+        if (!user) return;
+        try {
+            const itemsRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory_items');
+            await addDoc(itemsRef, {
+                name: '新需求品項',
+                unit: '件',
+                weekdayTarget: 0,
+                weekendTarget: 0,
+                roundUp: false,
+                currentStock: 0,
+                createdAt: new Date().toISOString()
+            });
+        } catch (error) {
+            console.error("Add error:", error);
+        }
+    };
 
-  /* ================= 品項 ================= */
+    const deleteItem = async (id) => {
+        if (!user) return;
+        try {
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory_items', id);
+            await deleteDoc(docRef);
+        } catch (error) {
+            console.error("Delete error:", error);
+        }
+    };
 
-  useEffect(() => {
-    if (!currentStoreId) return;
-    const itemsRef = collection(db, "stores", currentStoreId, "items");
-    const unsub = onSnapshot(itemsRef, snap => {
-      setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    return () => unsub();
-  }, [currentStoreId]);
+    const calculateOrder = (item) => {
+        const target = dayMode === 'weekday' ? item.weekdayTarget : item.weekendTarget;
+        let needed = (target || 0) - (item.currentStock || 0);
+        if (needed < 0) needed = 0;
+        return item.roundUp ? Math.ceil(needed) : needed;
+    };
 
-  const addItem = async () => {
-    const itemsRef = collection(db, "stores", currentStoreId, "items");
-    await addDoc(itemsRef, {
-      name: "新需求品項",
-      unit: "件",
-      weekdayTarget: 0,
-      weekendTarget: 0,
-      currentStock: 0,
-      roundUp: false
-    });
-  };
+    const summaryText = useMemo(() => {
+        const filtered = items
+            .map(item => ({ ...item, orderQty: calculateOrder(item) }))
+            .filter(item => item.orderQty > 0);
+        
+        if (filtered.length === 0) return "目前無須叫貨。";
+        
+        const dateStr = new Date().toLocaleDateString();
+        const modeStr = dayMode === 'weekday' ? '平日' : '假日';
+        let text = `【叫貨清單 - ${dateStr} (${modeStr})】\n`;
+        filtered.forEach(item => {
+            text += `• ${item.name}: ${item.orderQty} ${item.unit}\n`;
+        });
+        return text;
+    }, [items, dayMode]);
 
-  const updateItem = async (id, field, value) => {
-    await updateDoc(
-      doc(db, "stores", currentStoreId, "items", id),
-      { [field]: value }
-    );
-  };
+    const copyToClipboard = () => {
+        const el = document.createElement('textarea');
+        el.value = summaryText;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+    };
 
-  const deleteItem = async (id) => {
-    await deleteDoc(doc(db, "stores", currentStoreId, "items", id));
-  };
+    // 解決中文輸入問題的組件
+    const SafeInput = ({ value, onChange, className, placeholder, type = "text" }) => {
+        const [localValue, setLocalValue] = useState(value);
+        const isComposing = useRef(false);
 
-  /* ================= 計算 ================= */
+        useEffect(() => {
+            if (!isComposing.current) {
+                setLocalValue(value);
+            }
+        }, [value]);
 
-  const calculateOrder = (item) => {
-    const target = dayMode === 'weekday'
-      ? item.weekdayTarget
-      : item.weekendTarget;
-    return Math.max(0, target - item.currentStock);
-  };
+        return (
+            <input
+                type={type}
+                className={className}
+                value={localValue || ""}
+                placeholder={placeholder}
+                onCompositionStart={() => { isComposing.current = true; }}
+                onCompositionEnd={(e) => {
+                    isComposing.current = false;
+                    setLocalValue(e.target.value);
+                    onChange(e.target.value);
+                }}
+                onChange={(e) => {
+                    setLocalValue(e.target.value);
+                    if (!isComposing.current) {
+                        onChange(e.target.value);
+                    }
+                }}
+            />
+        );
+    };
 
-  const summaryText = useMemo(() => {
-    if (!items.length) return "目前無須叫貨。";
-    let text = `【${dayMode === 'weekday' ? '平日' : '假日'}叫貨清單】\n`;
-    items.forEach(i => {
-      const qty = calculateOrder(i);
-      if (qty > 0) text += `• ${i.name}：${qty} ${i.unit}\n`;
-    });
-    return text;
-  }, [items, dayMode]);
-
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(summaryText);
-  };
-
-  /* ================= 中文輸入 ================= */
-
-  const SafeInput = ({ value, onChange, className }) => {
-    const [local, setLocal] = useState(value);
-    const composing = useRef(false);
-    useEffect(() => setLocal(value), [value]);
+    if (loading) {
+        return (
+            <div className="flex h-screen items-center justify-center bg-slate-50">
+                <div className="text-center">
+                    <RefreshCw className="w-12 h-12 text-blue-500 animate-spin mx-auto mb-4" />
+                    <p className="text-slate-500 font-bold">雲端同步中...</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
-      <input
-        className={className}
-        value={local}
-        onCompositionStart={() => composing.current = true}
-        onCompositionEnd={(e) => {
-          composing.current = false;
-          setLocal(e.target.value);
-          onChange(e.target.value);
-        }}
-        onChange={(e) => {
-          setLocal(e.target.value);
-          if (!composing.current) onChange(e.target.value);
-        }}
-      />
-    );
-  };
-
-  return (
-    <div className="max-w-2xl mx-auto min-h-screen bg-slate-50 flex flex-col">
-      {/* Header */}
-      <header className="bg-white border-b p-4 flex justify-between">
-        <div className="flex items-center gap-2">
-          <ShoppingCart />
-          <b>多店盤點叫貨</b>
-        </div>
-        <button onClick={() => setView(view === 'inventory' ? 'settings' : 'inventory')}>
-          <Settings />
-        </button>
-      </header>
-
-      {/* 店家切換 */}
-      <div className="p-3 flex gap-2 overflow-x-auto bg-slate-100">
-        {stores.map(s => (
-          <button
-            key={s.id}
-            onClick={() => setCurrentStoreId(s.id)}
-            className={`px-4 py-2 rounded-xl flex items-center gap-1
-              ${s.id === currentStoreId ? 'bg-white shadow' : ''}`}
-          >
-            <Store size={16}/> {s.name}
-          </button>
-        ))}
-        <button onClick={addStore} className="px-3 py-2 bg-slate-800 text-white rounded-xl">
-          <Plus size={16}/>
-        </button>
-      </div>
-
-      <main className="flex-1 p-4 space-y-4">
-        {view === 'inventory' ? (
-          <>
-            <div className="flex gap-2">
-              <button onClick={() => setDayMode('weekday')} className="flex-1 bg-blue-100 p-3 rounded">
-                <CalendarDays /> 平日
-              </button>
-              <button onClick={() => setDayMode('weekend')} className="flex-1 bg-orange-100 p-3 rounded">
-                <PartyPopper /> 假日
-              </button>
-            </div>
-
-            {items.map(item => {
-              const qty = calculateOrder(item);
-              return (
-                <div key={item.id} className="bg-white p-3 rounded-xl border flex justify-between">
-                  <div>
-                    <b>{item.name}</b>
-                    <div className="text-xs text-gray-500">{item.unit}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      value={item.currentStock}
-                      className="w-16 text-center border rounded"
-                      onChange={e => updateItem(item.id, 'currentStock', Number(e.target.value))}
-                    />
-                    {qty > 0
-                      ? <span className="text-red-600 font-bold">+{qty}</span>
-                      : <CheckCircle2 className="text-green-500"/>}
-                  </div>
+        <div className="max-w-2xl mx-auto min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
+            <header className="bg-white border-b sticky top-0 z-10 px-4 py-3 flex justify-between items-center shadow-sm">
+                <div className="flex items-center gap-2">
+                    <div className="bg-blue-600 p-1.5 rounded-lg text-white">
+                        <ShoppingCart size={20} />
+                    </div>
+                    <h1 className="text-lg font-black tracking-tight">雲端盤點系統</h1>
                 </div>
-              );
-            })}
+                <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
+                    <button 
+                        onClick={() => setView('inventory')}
+                        className={`px-4 py-1.5 rounded-lg text-sm font-bold transition flex items-center gap-2 ${view === 'inventory' ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}
+                    >
+                        <ClipboardList size={16}/> 盤點
+                    </button>
+                    <button 
+                        onClick={() => setView('settings')}
+                        className={`px-4 py-1.5 rounded-lg text-sm font-bold transition flex items-center gap-2 ${view === 'settings' ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}
+                    >
+                        <Settings size={16}/> 設定
+                    </button>
+                </div>
+            </header>
 
-            <div className="bg-slate-800 text-white p-4 rounded-xl">
-              <div className="flex justify-between mb-2">
-                <b>叫貨清單</b>
-                <button onClick={copyToClipboard}><Copy size={16}/></button>
-              </div>
-              <pre className="whitespace-pre-wrap text-sm">{summaryText}</pre>
-            </div>
-          </>
-        ) : (
-          <>
-            <button onClick={addItem} className="bg-slate-800 text-white px-4 py-2 rounded-xl">
-              <Plus /> 新增品項
-            </button>
+            <main className="flex-1 p-4 space-y-4">
+                {view === 'inventory' ? (
+                    <>
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={() => setDayMode('weekday')}
+                                className={`flex-1 py-3 rounded-2xl font-black text-sm flex items-center justify-center gap-2 border-2 transition ${dayMode === 'weekday' ? 'bg-blue-50 border-blue-500 text-blue-600' : 'bg-white border-slate-100 text-slate-400'}`}
+                            >
+                                <CalendarDays size={18} /> 平日
+                            </button>
+                            <button 
+                                onClick={() => setDayMode('weekend')}
+                                className={`flex-1 py-3 rounded-2xl font-black text-sm flex items-center justify-center gap-2 border-2 transition ${dayMode === 'weekend' ? 'bg-orange-50 border-orange-500 text-orange-600' : 'bg-white border-slate-100 text-slate-400'}`}
+                            >
+                                <PartyPopper size={18} /> 假日
+                            </button>
+                        </div>
 
-            {items.map(item => (
-              <div key={item.id} className="bg-white p-3 rounded-xl border space-y-2">
-                <SafeInput
-                  className="w-full font-bold border-b"
-                  value={item.name}
-                  onChange={v => updateItem(item.id, 'name', v)}
-                />
-                <button onClick={() => deleteItem(item.id)} className="text-red-600">
-                  <Trash2 size={16}/> 刪除
-                </button>
-              </div>
-            ))}
+                        <div className="bg-white rounded-3xl border shadow-sm overflow-hidden">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="bg-slate-50 text-slate-400 font-bold border-b text-xs">
+                                        <th className="px-4 py-3 text-left">品項</th>
+                                        <th className="px-2 py-3 text-center">目標</th>
+                                        <th className="px-2 py-3 text-center w-24">庫存</th>
+                                        <th className="px-4 py-3 text-right">需補</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                    {items.map(item => {
+                                        const orderQty = calculateOrder(item);
+                                        const target = dayMode === 'weekday' ? item.weekdayTarget : item.weekendTarget;
+                                        return (
+                                            <tr key={item.id} className="hover:bg-slate-50/50 transition">
+                                                <td className="px-4 py-4">
+                                                    <div className="font-black text-slate-700">{item.name}</div>
+                                                    <div className="text-[10px] text-slate-400 font-bold">{item.unit}</div>
+                                                </td>
+                                                <td className="px-2 py-4 text-center font-bold text-slate-400">
+                                                    {target || 0}
+                                                </td>
+                                                <td className="px-2 py-4">
+                                                    <input 
+                                                        type="number"
+                                                        className="w-full text-center font-black text-lg bg-blue-50/50 text-blue-600 rounded-lg py-1 focus:bg-blue-100 outline-none"
+                                                        value={item.currentStock || 0}
+                                                        onChange={(e) => updateItem(item.id, 'currentStock', parseFloat(e.target.value) || 0)}
+                                                    />
+                                                </td>
+                                                <td className="px-4 py-4 text-right">
+                                                    {orderQty > 0 ? (
+                                                        <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full font-black">
+                                                            +{orderQty}
+                                                        </span>
+                                                    ) : (
+                                                        <CheckCircle2 className="text-emerald-400 inline" size={20} />
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
 
-            <hr />
-
-            {stores.map(s => (
-              <div key={s.id} className="flex gap-2 items-center">
-                <SafeInput
-                  className="flex-1 border-b"
-                  value={s.name}
-                  onChange={v => updateStoreName(s.id, v)}
-                />
-                <button onClick={() => deleteStore(s.id)}>
-                  <Trash2 size={16}/>
-                </button>
-              </div>
-            ))}
-          </>
-        )}
-      </main>
-    </div>
-  );
+                        <div className="bg-slate-800 rounded-3xl p-6 text-white shadow-xl space-y-4">
+                            <div className="flex justify-between items-center">
+                                <h3 className="font-black text-lg flex items-center gap-2">
+                                    <ListChecks className="text-blue-400"/> 叫貨清單
+                                </h3>
+                                <button onClick={copyToClipboard} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-xs font-black active:scale-95 transition">
+                                    複製文字
+                                </button>
+                            </div>
+                            <div className="bg-slate-900/50 rounded-2xl p-4 font-mono text-sm whitespace-pre-wrap text-slate-300 border border-white/5 min-h-[60px]">
+                                {summaryText}
+                            </div>
+                        </div>
+                    </>
+                ) : (
+                    <div className="space-y-4 pb-10">
+                        <div className="flex justify-between items-center px-1">
+                            <h2 className="text-xl font-black">品項設定</h2>
+                            <button onClick={addItem} className="bg-slate-800 text-white px-4 py-2 rounded-xl font-bold text-sm active:scale-95 transition flex items-center gap-2 shadow-lg">
+                                <Plus size={16}/> 新部品項
+                            </button>
+                        </div>
+                        <div className="space-y-3">
+                            {items.map(item => (
+                                <div key={item.id} className="bg-white p-4 rounded-3xl border shadow-sm space-y-4">
+                                    <div className="flex gap-2 items-center">
+                                        <SafeInput 
+                                            className="flex-1 font-black text-lg outline-none border-b-2 border-transparent focus:border-blue-500 px-1"
+                                            value={item.name}
+                                            onChange={(val) => updateItem(item.id, 'name', val)}
+                                        />
+                                        <SafeInput 
+                                            className="w-20 bg-slate-50 rounded-lg text-center text-sm font-bold py-1.5"
+                                            placeholder="單位"
+                                            value={item.unit}
+                                            onChange={(val) => updateItem(item.id, 'unit', val)}
+                                        />
+                                        <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300 hover:text-red-500 transition">
+                                            <Trash2 size={20}/>
+                                        </button>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="bg-slate-50/50 p-3 rounded-2xl border border-slate-100">
+                                            <label className="text-[10px] font-black text-slate-400 block mb-1">平日應備</label>
+                                            <input 
+                                                type="number" 
+                                                className="w-full bg-transparent font-bold text-slate-700 outline-none" 
+                                                value={item.weekdayTarget || 0} 
+                                                onChange={(e) => updateItem(item.id, 'weekdayTarget', parseFloat(e.target.value) || 0)}
+                                            />
+                                        </div>
+                                        <div className="bg-slate-50/50 p-3 rounded-2xl border border-slate-100">
+                                            <label className="text-[10px] font-black text-slate-400 block mb-1">假日應備</label>
+                                            <input 
+                                                type="number" 
+                                                className="w-full bg-transparent font-bold text-slate-700 outline-none" 
+                                                value={item.weekendTarget || 0} 
+                                                onChange={(e) => updateItem(item.id, 'weekendTarget', parseFloat(e.target.value) || 0)}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center justify-between bg-blue-50/50 px-4 py-2 rounded-2xl border border-blue-100">
+                                        <span className="text-xs font-black text-slate-600 flex items-center gap-1">
+                                            <ArrowUpToLine size={12} /> 自動進位 (四捨五入)
+                                        </span>
+                                        <button 
+                                            onClick={() => updateItem(item.id, 'roundUp', !item.roundUp)}
+                                            className={`w-10 h-5 rounded-full transition-all relative ${item.roundUp ? 'bg-blue-600' : 'bg-slate-300'}`}
+                                        >
+                                            <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${item.roundUp ? 'left-5' : 'left-1'}`}></div>
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </main>
+        </div>
+    );
 };
 
 export default App;
