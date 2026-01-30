@@ -6,35 +6,51 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
+
 <body class="bg-gray-100 p-4">
+<div class="max-w-4xl mx-auto space-y-4">
 
-<div id="app" class="max-w-4xl mx-auto space-y-4">
-  <h1 class="text-2xl font-bold">📦 盤點補貨系統</h1>
+  <h1 class="text-2xl font-bold">📦 多商家盤點補貨系統</h1>
 
-  <!-- 商家切換 -->
+  <!-- 商家 -->
   <div class="flex gap-2">
     <select id="merchantSelect" class="border p-2 flex-1"></select>
     <button id="addMerchant" class="bg-blue-600 text-white px-3">＋商家</button>
     <button id="delMerchant" class="bg-red-600 text-white px-3">刪除</button>
   </div>
 
-  <!-- 新增品項 -->
-  <div class="bg-white p-3 rounded shadow space-y-2">
-    <h2 class="font-bold">➕ 新增品項</h2>
-    <input id="itemName" placeholder="品項名稱" class="border p-1 w-full" />
-    <input id="itemUnit" placeholder="單位（包 / 顆）" class="border p-1 w-full" />
-    <input id="itemMin" type="number" placeholder="最低庫存" class="border p-1 w-full" />
-    <button id="addItem" class="bg-green-600 text-white px-3 py-1">新增品項</button>
+  <!-- 平假日 -->
+  <div class="flex gap-4 items-center">
+    <label><input type="radio" name="day" value="weekday" checked> 平日</label>
+    <label><input type="radio" name="day" value="weekend"> 假日</label>
   </div>
 
-  <!-- 品項盤點 -->
+  <!-- 盤點 -->
   <div id="items" class="space-y-2"></div>
 
   <!-- 補貨清單 -->
-  <div class="bg-yellow-50 p-3 rounded shadow">
-    <h2 class="font-bold">🧾 補貨清單</h2>
-    <div id="orderList" class="whitespace-pre-line"></div>
+  <div class="bg-yellow-50 p-3 rounded shadow space-y-2">
+    <div class="flex justify-between items-center">
+      <h2 class="font-bold">🧾 補貨清單</h2>
+      <button id="copyOrder" class="bg-gray-700 text-white px-2 py-1 text-sm">📋 複製</button>
+    </div>
+    <pre id="orderList" class="whitespace-pre-wrap"></pre>
   </div>
+
+  <!-- 新增品項 -->
+  <div class="bg-white p-3 rounded shadow space-y-2">
+    <h2 class="font-bold">➕ 新增品項</h2>
+    <input id="itemName" class="border p-1 w-full" placeholder="品項名稱">
+    <input id="itemUnit" class="border p-1 w-full" placeholder="單位">
+    <input id="itemWeekday" type="number" class="border p-1 w-full" placeholder="平日最低庫存">
+    <input id="itemWeekend" type="number" class="border p-1 w-full" placeholder="假日最低庫存">
+
+    <textarea id="itemLinks" class="border p-1 w-full"
+      placeholder="關聯食材（一行一個）&#10;格式：馬鈴薯,顆,2"></textarea>
+
+    <button id="addItem" class="bg-green-600 text-white px-3 py-1">新增品項</button>
+  </div>
+
 </div>
 
 <script type="module">
@@ -54,108 +70,116 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-let currentMerchant = null;
-let itemsData = {};
-let stockData = {};
+let merchant = null;
+let items = {};
+let stocks = {};
+let dayType = "weekday";
 
 const merchantSelect = document.getElementById("merchantSelect");
 
-function loadMerchants() {
-  onValue(ref(db, "merchants"), snap => {
-    merchantSelect.innerHTML = "";
-    snap.forEach(c => {
-      const opt = document.createElement("option");
-      opt.value = c.key;
-      opt.textContent = c.val().name;
-      merchantSelect.appendChild(opt);
-    });
-    if (!currentMerchant && merchantSelect.value) {
-      currentMerchant = merchantSelect.value;
-      loadData();
-    }
+onValue(ref(db, "merchants"), s => {
+  merchantSelect.innerHTML = "";
+  s.forEach(c => {
+    const o = document.createElement("option");
+    o.value = c.key;
+    o.textContent = c.val().name;
+    merchantSelect.appendChild(o);
   });
-}
+  if (!merchant && merchantSelect.value) {
+    merchant = merchantSelect.value;
+    loadData();
+  }
+});
 
 merchantSelect.onchange = () => {
-  currentMerchant = merchantSelect.value;
+  merchant = merchantSelect.value;
   loadData();
 };
 
-document.getElementById("addMerchant").onclick = () => {
-  const name = prompt("商家名稱");
-  if (!name) return;
-  const id = "m_" + Date.now();
-  set(ref(db, `merchants/${id}`), { name });
-};
-
-document.getElementById("delMerchant").onclick = () => {
-  if (!currentMerchant) return;
-  if (confirm("確定刪除商家？")) {
-    remove(ref(db, `merchants/${currentMerchant}`));
-    remove(ref(db, `data/${currentMerchant}`));
-  }
-};
+document.getElementsByName("day").forEach(r => {
+  r.onchange = e => {
+    dayType = e.target.value;
+    render();
+  };
+});
 
 function loadData() {
-  onValue(ref(db, `data/${currentMerchant}/items`), s => {
-    itemsData = s.val() || {};
-    renderItems();
+  onValue(ref(db, `data/${merchant}/items`), s => {
+    items = s.val() || {};
+    render();
   });
-  onValue(ref(db, `data/${currentMerchant}/stocks`), s => {
-    stockData = s.val() || {};
-    renderItems();
+  onValue(ref(db, `data/${merchant}/stocks`), s => {
+    stocks = s.val() || {};
+    render();
   });
 }
 
-document.getElementById("addItem").onclick = () => {
-  const name = itemName.value;
-  if (!name) return;
-  push(ref(db, `data/${currentMerchant}/items`), {
-    name,
-    unit: itemUnit.value,
-    min: Number(itemMin.value),
-    links: []
-  });
-  itemName.value = itemUnit.value = itemMin.value = "";
+document.getElementById("addMerchant").onclick = () => {
+  const n = prompt("商家名稱");
+  if (!n) return;
+  set(ref(db, `merchants/m_${Date.now()}`), { name: n });
 };
 
-function renderItems() {
+document.getElementById("delMerchant").onclick = () => {
+  if (confirm("確定刪除商家？")) {
+    remove(ref(db, `merchants/${merchant}`));
+    remove(ref(db, `data/${merchant}`));
+  }
+};
+
+document.getElementById("addItem").onclick = () => {
+  const links = itemLinks.value.split("\n").filter(Boolean).map(l => {
+    const [name, unit, qty] = l.split(",");
+    return { name, unit, qty: Number(qty) };
+  });
+
+  push(ref(db, `data/${merchant}/items`), {
+    name: itemName.value,
+    unit: itemUnit.value,
+    weekdayMin: Number(itemWeekday.value),
+    weekendMin: Number(itemWeekend.value),
+    links
+  });
+
+  itemName.value = itemUnit.value = itemWeekday.value = itemWeekend.value = itemLinks.value = "";
+};
+
+function render() {
   const box = document.getElementById("items");
+  let order = "";
   box.innerHTML = "";
-  let orderText = "";
 
-  Object.entries(itemsData).forEach(([id, item]) => {
-    const current = stockData[id] || 0;
-    const need = Math.max(0, item.min - current);
+  Object.entries(items).forEach(([id, item]) => {
+    const min = dayType === "weekday" ? item.weekdayMin : item.weekendMin;
+    const cur = stocks[id] || 0;
+    const need = Math.max(0, min - cur);
 
-    const div = document.createElement("div");
-    div.className = "bg-white p-2 rounded shadow";
-
-    div.innerHTML = `
-      <div class="font-bold">${item.name}（最低 ${item.min}${item.unit}）</div>
-      <input type="number" class="border p-1 w-full mt-1" value="${current}" />
+    const d = document.createElement("div");
+    d.className = "bg-white p-2 rounded shadow";
+    d.innerHTML = `
+      <div class="font-bold">${item.name}（最低 ${min}${item.unit}）</div>
+      <input type="number" class="border p-1 w-full mt-1" value="${cur}">
     `;
-
-    div.querySelector("input").oninput = e => {
-      set(ref(db, `data/${currentMerchant}/stocks/${id}`), Number(e.target.value));
+    d.querySelector("input").oninput = e => {
+      set(ref(db, `data/${merchant}/stocks/${id}`), Number(e.target.value));
     };
-
-    box.appendChild(div);
+    box.appendChild(d);
 
     if (need > 0) {
-      orderText += `${item.name} +${need}${item.unit}\n`;
+      order += `${item.name} +${need}${item.unit}\n`;
       (item.links || []).forEach(l => {
-        orderText += `  ・${l.name} +${l.qty * need}${l.unit}\n`;
+        order += `  ・${l.name} +${l.qty * need}${l.unit}\n`;
       });
     }
   });
 
-  document.getElementById("orderList").textContent =
-    orderText || "目前無需補貨";
+  document.getElementById("orderList").textContent = order || "目前無需補貨";
 }
 
-loadMerchants();
+document.getElementById("copyOrder").onclick = () => {
+  navigator.clipboard.writeText(orderList.textContent);
+  alert("已複製補貨清單");
+};
 </script>
-
 </body>
 </html>
