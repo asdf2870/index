@@ -1,51 +1,41 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-  <meta charset="UTF-8" />
-  <title>多商家盤點補貨系統</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="https://cdn.tailwindcss.com"></script>
+<meta charset="UTF-8">
+<title>盤點補貨系統</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdn.tailwindcss.com"></script>
 </head>
 
-<body class="bg-gray-100 p-4">
-<div class="max-w-4xl mx-auto space-y-4">
+<body class="bg-gray-100 p-3">
+<div class="max-w-xl mx-auto space-y-3">
 
-<h1 class="text-2xl font-bold">📦 多商家盤點補貨系統</h1>
+<header class="flex justify-between items-center">
+  <h1 class="text-xl font-bold">📦 盤點補貨</h1>
+  <button id="toggleManage" class="text-sm bg-gray-700 text-white px-2 py-1 rounded">
+    🔧 管理品項
+  </button>
+</header>
 
 <!-- 商家 -->
-<div class="flex gap-2">
-  <select id="merchantSelect" class="border p-2 flex-1"></select>
-  <button id="addMerchant" class="bg-blue-600 text-white px-3">＋商家</button>
-  <button id="delMerchant" class="bg-red-600 text-white px-3">刪除</button>
-</div>
+<select id="merchantSelect" class="w-full border p-2 rounded"></select>
 
 <!-- 平假日 -->
-<div class="flex gap-4">
+<div class="flex gap-4 text-sm">
   <label><input type="radio" name="day" value="weekday" checked> 平日</label>
   <label><input type="radio" name="day" value="weekend"> 假日</label>
 </div>
 
-<!-- 盤點 -->
-<div id="items" class="space-y-3"></div>
+<!-- 品項 -->
+<div id="items" class="space-y-2"></div>
 
 <!-- 補貨清單 -->
-<div class="bg-yellow-50 p-3 rounded shadow">
-  <div class="flex justify-between mb-2">
-    <h2 class="font-bold">🧾 補貨清單</h2>
-    <button id="copyOrder" class="bg-gray-700 text-white px-2 text-sm">📋 複製</button>
+<div class="bg-yellow-50 p-3 rounded">
+  <div class="flex justify-between items-center mb-1">
+    <b>🧾 補貨清單</b>
+    <button id="copyOrder" class="text-xs bg-gray-700 text-white px-2 rounded">複製</button>
   </div>
-  <pre id="orderList"></pre>
-</div>
-
-<!-- 新增品項 -->
-<div class="bg-white p-3 rounded shadow space-y-2">
-  <h2 class="font-bold">➕ 新增品項</h2>
-  <input id="newName" class="border p-1 w-full" placeholder="品項名稱">
-  <input id="newUnit" class="border p-1 w-full" placeholder="單位">
-  <input id="newW" type="number" class="border p-1 w-full" placeholder="平日最低">
-  <input id="newH" type="number" class="border p-1 w-full" placeholder="假日最低">
-  <textarea id="newLinks" class="border p-1 w-full" placeholder="關聯食材：名稱,單位,數量"></textarea>
-  <button id="addItem" class="bg-green-600 text-white px-3 py-1">新增</button>
+  <pre id="orderList" class="text-sm"></pre>
 </div>
 
 </div>
@@ -55,19 +45,24 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebas
 import { getDatabase, ref, onValue, set, push, update, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
 const app = initializeApp({
-  apiKey: "AIzaSyCiWs5ZtstLxSSLQHufvnrWilnnGADFbEI",
-  authDomain: "ngdd-8dd14.firebaseapp.com",
-  databaseURL: "https://ngdd-8dd14-default-rtdb.firebaseio.com",
-  projectId: "ngdd-8dd14"
+  apiKey:"AIzaSyCiWs5ZtstLxSSLQHufvnrWilnnGADFbEI",
+  authDomain:"ngdd-8dd14.firebaseapp.com",
+  databaseURL:"https://ngdd-8dd14-default-rtdb.firebaseio.com",
+  projectId:"ngdd-8dd14"
 });
 const db = getDatabase(app);
 
-let merchant = null;
-let items = {};
-let stocks = {};
-let day = "weekday";
+let merchant=null, items={}, stocks={}, day="weekday", manage=false;
 
-const merchantSelect = document.getElementById("merchantSelect");
+toggleManage.onclick=()=>{
+  manage=!manage;
+  toggleManage.textContent=manage?"✅ 完成":"🔧 管理品項";
+  render();
+};
+
+document.getElementsByName("day").forEach(r=>{
+  r.onchange=e=>{day=e.target.value;render();}
+});
 
 onValue(ref(db,"merchants"),s=>{
   merchantSelect.innerHTML="";
@@ -76,50 +71,18 @@ onValue(ref(db,"merchants"),s=>{
     o.value=c.key;o.textContent=c.val().name;
     merchantSelect.appendChild(o);
   });
-  if(!merchant&&merchantSelect.value){
-    merchant=merchantSelect.value;load();
-  }
+  if(!merchant){merchant=merchantSelect.value;load();}
 });
-
 merchantSelect.onchange=()=>{merchant=merchantSelect.value;load();};
-
-document.getElementsByName("day").forEach(r=>{
-  r.onchange=e=>{day=e.target.value;render();}
-});
 
 function load(){
   onValue(ref(db,`data/${merchant}/items`),s=>{items=s.val()||{};render();});
   onValue(ref(db,`data/${merchant}/stocks`),s=>{stocks=s.val()||{};render();});
 }
 
-document.getElementById("addMerchant").onclick=()=>{
-  const n=prompt("商家名稱"); if(!n)return;
-  set(ref(db,"merchants/m_"+Date.now()),{name:n});
-};
-
-document.getElementById("delMerchant").onclick=()=>{
-  if(confirm("刪除商家？")){
-    remove(ref(db,"merchants/"+merchant));
-    remove(ref(db,"data/"+merchant));
-  }
-};
-
-document.getElementById("addItem").onclick=()=>{
-  const links=newLinks.value.split("\n").filter(Boolean).map(l=>{
-    const[a,b,c]=l.split(",");return{name:a,unit:b,qty:+c};
-  });
-  push(ref(db,`data/${merchant}/items`),{
-    name:newName.value,unit:newUnit.value,
-    weekdayMin:+newW.value,weekendMin:+newH.value,
-    links
-  });
-  newName.value=newUnit.value=newW.value=newH.value=newLinks.value="";
-};
-
 function render(){
-  const box=document.getElementById("items");
-  box.innerHTML="";
-  let orderMap={};
+  itemsBox.innerHTML="";
+  let order={};
 
   Object.entries(items).forEach(([id,it])=>{
     const min=day==="weekday"?it.weekdayMin:it.weekendMin;
@@ -127,33 +90,54 @@ function render(){
     const need=Math.max(0,min-cur);
 
     const d=document.createElement("div");
-    d.className="bg-white p-2 rounded shadow space-y-1";
-    d.innerHTML=`
-      <input value="${it.name}" class="border p-1 w-full">
-      <input value="${it.unit}" class="border p-1 w-full">
-      <button class="text-red-500 text-sm">刪除</button>
-      <input type="number" value="${cur}" class="border p-1 w-full">
-    `;
-    const [n,u,del,inp]=d.querySelectorAll("input,button");
-    n.oninput=e=>update(ref(db,`data/${merchant}/items/${id}`),{name:e.target.value});
-    u.oninput=e=>update(ref(db,`data/${merchant}/items/${id}`),{unit:e.target.value});
-    del.onclick=()=>confirm("刪除品項？")&&remove(ref(db,`data/${merchant}/items/${id}`));
-    inp.oninput=e=>set(ref(db,`data/${merchant}/stocks/${id}`),+e.target.value);
-    box.appendChild(d);
+    d.className="bg-white p-2 rounded shadow text-sm space-y-1";
+
+    if(!manage){
+      d.innerHTML=`
+        <div class="font-bold">${it.name}（最低 ${min}${it.unit}）</div>
+        <div class="flex gap-2 items-center">
+          <input type="number" class="border p-1 flex-1" value="${cur}">
+          <span class="${need>0?'text-red-500':'text-green-600'}">
+            ${need>0?`缺 ${need}`:"OK"}
+          </span>
+        </div>
+      `;
+      d.querySelector("input").oninput=e=>{
+        set(ref(db,`data/${merchant}/stocks/${id}`),+e.target.value);
+      };
+    }else{
+      d.innerHTML=`
+        <input class="border p-1 w-full" value="${it.name}">
+        <input class="border p-1 w-full" value="${it.unit}">
+        <input type="number" class="border p-1 w-full" value="${it.weekdayMin}">
+        <input type="number" class="border p-1 w-full" value="${it.weekendMin}">
+        <button class="text-red-500 text-xs">刪除品項</button>
+      `;
+      const [n,u,w,h,del]=d.querySelectorAll("input,button");
+      n.oninput=e=>update(ref(db,`data/${merchant}/items/${id}`),{name:e.target.value});
+      u.oninput=e=>update(ref(db,`data/${merchant}/items/${id}`),{unit:e.target.value});
+      w.oninput=e=>update(ref(db,`data/${merchant}/items/${id}`),{weekdayMin:+e.target.value});
+      h.oninput=e=>update(ref(db,`data/${merchant}/items/${id}`),{weekendMin:+e.target.value});
+      del.onclick=()=>confirm("刪除？")&&remove(ref(db,`data/${merchant}/items/${id}`));
+    }
+
+    itemsBox.appendChild(d);
 
     if(need>0){
       (it.links||[]).forEach(l=>{
         const k=l.name+l.unit;
-        orderMap[k]=(orderMap[k]||0)+l.qty*need;
+        order[k]=(order[k]||0)+l.qty*need;
       });
     }
   });
 
-  orderList.textContent=Object.entries(orderMap)
+  orderList.textContent=Object.entries(order)
     .map(([k,v])=>`${k} +${v}`).join("\n")||"目前無需補貨";
 }
 
 copyOrder.onclick=()=>navigator.clipboard.writeText(orderList.textContent);
+
+const itemsBox=document.getElementById("items");
 </script>
 </body>
 </html>
