@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>C25多商家叫貨表</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
+  body { font-family: 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; background-color: #f8fafc; }
+  input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+
+// ================== Firebase 初始化 ==================
+const firebaseConfig = {
+  apiKey: "AIzaSyCiWs5ZtstLxSSLQHufvnrWilnnGADFbEI",
+  authDomain: "ngdd-8dd14.firebaseapp.com",
+  projectId: "ngdd-8dd14",
+  storageBucket: "ngdd-8dd14.firebasestorage.app",
+  messagingSenderId: "780195335307",
+  appId: "1:780195335307:web:c6e95d1e0a7ee92cf3588e",
+  databaseURL: "https://ngdd-8dd14-default-rtdb.firebaseio.com"
+};
+if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+const { useState, useEffect, useMemo } = React;
+
+// ================== Lucide Icon ==================
+const Icon = ({ name, size = 18, className = "" }) => {
+  useEffect(() => {
+    if (window.lucide) {
+      window.lucide.createIcons({
+        attrs: { class: className, 'stroke-width': 2.5, width: size, height: size },
+        nameAttr: 'data-lucide'
+      });
+    }
+  }, [name, size, className]);
+  return <i data-lucide={name} className={className}></i>;
+};
+
+// ================== 主 App ==================
+const App = () => {
+  const [merchants, setMerchants] = useState([
+    { key: "merchant_NGD/veg", name: "NGD-蔬菜" },
+    { key: "merchant_XYZ/fruit", name: "XYZ-水果" }
+  ]);
+  const [currentMerchant, setCurrentMerchant] = useState(merchants[0].key);
+
+  const [mode, setMode] = useState('inventory'); 
+  const [dayType, setDayType] = useState('weekday'); 
+  const [items, setItems] = useState([]);
+  const [stockCounts, setStockCounts] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [showCopySuccess, setShowCopySuccess] = useState(false);
+
+  // ========== 監聽 Firebase 資料 ==========
+  useEffect(() => {
+    setLoading(true);
+    const dataRef = db.ref(`inventory_tool/${currentMerchant}`);
+    dataRef.on('value', (snapshot) => {
+      const val = snapshot.val();
+      if (val) {
+        setItems(val.items || []);
+        setStockCounts(val.stockCounts || {});
+      } else {
+        setItems([]);
+        setStockCounts({});
+      }
+      setLoading(false);
+    });
+    return () => dataRef.off();
+  }, [currentMerchant]);
+
+  // ========== 雲端同步更新 ==========
+  const syncToCloud = (newItems, newCounts) => {
+    db.ref(`inventory_tool/${currentMerchant}`).update({
+      items: newItems,
+      stockCounts: newCounts
+    });
+  };
+
+  // ========== 品項操作 ==========
+  const addItem = () => {
+    const newItem = { 
+      id: Date.now(), name: '', weekdayMin: 0, weekendMin: 0, unit: '', 
+      shouldRound: false, related: [] 
+    };
+    const updatedItems = [...items, newItem];
+    setItems(updatedItems);
+    syncToCloud(updatedItems, stockCounts);
+    setMode('settings');
+  };
+
+  const updateItem = (id, field, value) => {
+    const updatedItems = items.map(item => item.id === id ? { ...item, [field]: value } : item);
+    setItems(updatedItems);
+    syncToCloud(updatedItems, stockCounts);
+  };
+
+  const deleteItem = (id) => {
+    if(confirm('確定刪除此品項？')) {
+      const updatedItems = items.filter(item => item.id !== id);
+      const newCounts = {...stockCounts};
+      delete newCounts[id];
+      setItems(updatedItems);
+      setStockCounts(newCounts);
+      syncToCloud(updatedItems, newCounts);
+    }
+  };
+
+  const calculateNeed = (item, currentStockStr) => {
+    const currentStock = parseFloat(currentStockStr || 0);
+    const min = dayType === 'weekday' ? item.weekdayMin : item.weekendMin;
+    let need = min - currentStock;
+    if(need <= 0 || isNaN(need)) return 0;
+    return item.shouldRound ? Math.round(need) : parseFloat(need.toFixed(2));
+  };
+
+  // ========== 補貨清單計算（包含相關品項） ==========
+  const orderList = useMemo(() => {
+    return items.map(item => {
+      const need = calculateNeed(item, stockCounts[item.id]);
+      if(need > 0) {
+        return { name: item.name, need, unit: item.unit, related: item.related || [] };
+      }
+      return null;
+    }).filter(Boolean);
+  }, [items, stockCounts, dayType]);
+
+  // ========== 複製補貨清單 ==========
+  const copyOrder = () => {
+    const label = dayType === 'weekday' ? '平日' : '假日';
+    const summary = orderList.map(i => {
+      const relatedText = i.related.length > 0 ? ` (相關: ${i.related.join(', ')})` : '';
+      return `${i.name}: ${i.need} ${i.unit}${relatedText}`;
+    }).join('\n');
+    const text = summary ? `【${label}補貨清單】\n${summary}` : "無需補貨";
+
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    document.body.appendChild(textArea);
+    textArea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textArea);
+
+    setShowCopySuccess(true);
+    setTimeout(() => setShowCopySuccess(false), 2000);
+  };
+
+  const clearCounts = () => {
+    if(confirm('確定要清空目前所有輸入的數值嗎？')) {
+      setStockCounts({});
+      syncToCloud(items, {});
+    }
+  };
+
+  if(loading) return <div className="flex h-screen items-center justify-center text-slate-400 font-bold animate-pulse">盤點資料讀取中...</div>;
+
+  return (
+    <div className="min-h-screen flex flex-col max-w-2xl mx-auto bg-white shadow-2xl overflow-hidden">
+      {/* ================= Header ================= */}
+      <header className="bg-slate-900 text-white p-4 sticky top-0 z-20 shadow-lg space-y-2">
+        {/* 商家下拉選單 */}
+        <select className="w-full rounded p-1 text-sm font-bold text-slate-900" value={currentMerchant} onChange={(e)=>setCurrentMerchant(e.target.value)}>
+          {merchants.map(m => <option key={m.key} value={m.key}>{m.name}</option>)}
+        </select>
+
+        <div className="flex justify-between items-center mt-2">
+          <h1 className="text-lg font-bold flex items-center gap-2 tracking-tight">
+            <Icon name="calculator" className="text-blue-400" size={20} /> 盤點計算工具
+          </h1>
+          <div className="flex gap-2">
+            {mode === 'inventory' && (
+              <button onClick={clearCounts} className="p-2 bg-slate-800 rounded-lg text-slate-400 active:text-white">
+                <Icon name="rotate-ccw" size={16} />
+              </button>
+            )}
+            <button 
+              onClick={() => setMode(mode === 'inventory' ? 'settings' : 'inventory')}
+              className="bg-blue-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all shadow-md"
+            >
+              <Icon name={mode === 'inventory' ? "settings" : "check"} size={14} />
+              {mode === 'inventory' ? "管理品項" : "完成設定"}
+            </button>
+          </div>
+        </div>
+
+        {/* 平日/假日切換 */}
+        <div className="flex bg-slate-800 p-1 rounded-lg">
+          <button onClick={() => setDayType('weekday')} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all ${dayType==='weekday'?'bg-slate-700 text-blue-400 shadow-sm':'text-slate-500'}`}>平日 (一~五)</button>
+          <button onClick={() => setDayType('weekend')} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all ${dayType==='weekend'?'bg-slate-700 text-orange-400 shadow-sm':'text-slate-500'}`}>假日 (六~日)</button>
+        </div>
+      </header>
+
+      {/* ================= Main ================= */}
+      <main className="flex-1 overflow-y-auto custom-scrollbar p-3">
+        {mode==='inventory' ? (
+          <div className="divide-y divide-slate-100">
+            {items.length === 0 ? (
+              <div className="py-20 text-center text-slate-400 text-sm italic">請點擊右上方「管理」新增品項</div>
+            ) : (
+              items.map(item => {
+                const need = calculateNeed(item, stockCounts[item.id]);
+                const isShort = need > 0;
+                return (
+                  <div key={item.id} className={`py-3 flex items-center gap-3 ${isShort?'bg-orange-50/30':''}`}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`font-bold text-sm truncate ${isShort?'text-orange-700':'text-slate-700'}`}>{item.name}</span>
+                        <span className="text-[10px] text-slate-400 whitespace-nowrap">標: {dayType==='weekday'?item.weekdayMin:item.weekendMin}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 w-48 justify-end">
+                      <div className="relative w-24">
+                        <input 
+                          type="number" inputMode="decimal" placeholder="現存"
+                          value={stockCounts[item.id] || ''}
+                          onChange={(e)=>{ const newCounts = {...stockCounts,[item.id]:e.target.value}; setStockCounts(newCounts); syncToCloud(items,newCounts); }}
+                          className="w-full bg-slate-100 border-none rounded-lg py-1.5 px-2 text-right text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-bold">{item.unit}</span>
+                      </div>
+                      <div className={`w-14 text-center font-black text-sm ${isShort?'text-red-500':'text-slate-200'}`}>
+                        {isShort ? `+${need}` : 'OK'}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3 pb-10">
+            {items.map(item => (
+              <div key={item.id} className="p-3 bg-white border border-slate-200 rounded-xl space-y-2 relative shadow-sm">
+                <div className="flex gap-2">
+                  <input value={item.name} onChange={e=>updateItem(item.id,'name',e.target.value)} placeholder="品項名稱" className="flex-1 font-bold border-b border-slate-100 focus:border-blue-500 outline-none text-sm" />
+                  <input value={item.unit} onChange={e=>updateItem(item.id,'unit',e.target.value)} placeholder="單位" className="w-12 bg-slate-50 rounded text-center text-xs p-1 outline-none" />
+                  <button onClick={()=>deleteItem(item.id)} className="text-slate-300 active:text-red-500"><Icon name="trash-2" size={14}/></button>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex-1 flex gap-2">
+                    <div className="flex-1">
+                      <span className="text-[9px] text-blue-500 font-bold block">平日標</span>
+                      <input type="number" value={item.weekdayMin} onChange={e=>updateItem(item.id,'weekdayMin',parseFloat(e.target.value)||0)} className="w-full bg-slate-50 rounded p-1 text-xs font-bold outline-none" />
+                    </div>
+                    <div className="flex-1">
+                      <span className="text-[9px] text-orange-500 font-bold block">假日標</span>
+                      <input type="number" value={item.weekendMin} onChange={e=>updateItem(item.id,'weekendMin',parseFloat(e.target.value)||0)} className="w-full bg-slate-50 rounded p-1 text-xs font-bold outline-none" />
+                    </div>
+                  </div>
+                  <button onClick={()=>updateItem(item.id,'shouldRound',!item.shouldRound)} className={`px-2 py-1 rounded text-[9px] font-bold transition-all ${item.shouldRound?'bg-green-100 text-green-600 ring-1 ring-green-200':'bg-slate-100 text-slate-400'}`}>四捨五入</button>
+                </div>
+              </div>
+            ))}
+            <button onClick={addItem} className="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-bold flex items-center justify-center gap-2 text-sm">
+              <Icon name="plus" size={16} /> 新增品項
+            </button>
+          </div>
+        )}
+      </main>
+
+      {/* ================= Footer ================= */}
+      {mode==='inventory' && (
+        <footer className="bg-slate-50 border-t border-slate-200 shadow-inner">
+          <div className="px-4 py-3">
+            <div className="bg-white border border-slate-200 rounded-lg p-2 max-h-24 overflow-y-auto custom-scrollbar mb-3">
+              {orderList.length>0 ? (
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {orderList.map((i,idx)=>(
+                    <span key={idx} className="text-xs text-slate-700 font-medium">
+                      {i.name} <span className="text-red-500 font-bold">+{i.need}</span>{i.unit}{i.related.length>0?` (相關: ${i.related.join(', ')})`:''}
+                    </span>
+                  ))}
+                </div>
+              ) : <p className="text-[10px] text-center text-slate-300 py-2">目前無缺貨品項</p>}
+            </div>
+            <button onClick={copyOrder} disabled={orderList.length===0} className={`w-full py-3 rounded-xl font-bold text-white shadow-lg transition-all flex items-center justify-center gap-2 active:scale-95 ${showCopySuccess?'bg-green-500':(orderList.length>0?(dayType==='weekday'?'bg-blue-600':'bg-orange-600'):'bg-slate-300')}`}>
+              <Icon name={showCopySuccess?"check":"copy"} size={16} />
+              {showCopySuccess?"已成功複製":"一鍵複製補貨清單"}
+            </button>
+          </div>
+        </footer>
+      )}
+    </div>
+  );
+};
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+
+</script>
+</body>
+</html>
