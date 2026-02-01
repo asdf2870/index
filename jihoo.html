@@ -55,10 +55,13 @@ function render(){
     </div>
   `;
 
-  /* Header */
+  /* Header + 清除盤點 */
   wrap.innerHTML += `
-    <div class="flex justify-between items-center mb-3">
-      <h1 class="font-bold text-lg">盤點叫貨系統</h1>
+    <div class="flex justify-between items-center mb-3 gap-2">
+      <h1 class="font-bold text-lg flex-1">盤點叫貨系統</h1>
+      ${page==='inventory'
+        ? `<button id="clearStock" class="px-2 py-1 bg-red-500 text-white rounded text-sm">清除盤點</button>`
+        : ``}
       <button id="togglePage" class="px-3 py-1 bg-blue-600 text-white rounded">
         ${page==='inventory'?'管理品項':'返回盤點'}
       </button>
@@ -88,6 +91,7 @@ function render(){
         <button onclick="adj('${it.id}',-0.5)">-</button>
         <input type="number" step="0.5" class="w-16 text-center border rounded"
           value="${stockCounts[it.id]||0}">
+        <span class="text-sm text-slate-500">${it.unit||''}</span>
         <button onclick="adj('${it.id}',0.5)">+</button>
       `;
       row.querySelector('input').oninput=e=>{
@@ -175,6 +179,15 @@ function render(){
   document.getElementById('togglePage').onclick=()=>{
     page=page==='inventory'?'manage':'inventory'; render();
   };
+  if(document.getElementById('clearStock')){
+    document.getElementById('clearStock').onclick=()=>{
+      if(confirm('確定要清除所有盤點數值？')){
+        stockCounts = {};
+        sync();
+        render();
+      }
+    };
+  }
   if(document.getElementById('wd')) document.getElementById('wd').onclick=()=>{dayType='weekday';render();};
   if(document.getElementById('we')) document.getElementById('we').onclick=()=>{dayType='weekend';render();};
 }
