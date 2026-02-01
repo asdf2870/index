@@ -125,13 +125,14 @@ function render(){
     div.className='flex flex-col gap-1 p-2 bg-white rounded shadow-sm';
 
     if(managementMode){
-      // 單行顯示：名稱 / 平日最低 / 假日最低 / 單位
+      // 單行顯示：名稱 / 平日最低 / 假日最低 / 單位 / 關聯食材
       div.innerHTML = `
         <div class="flex gap-2 items-center">
           <input value="${item.name}" placeholder="品項名稱" class="border-b flex-1">
           <input type="number" value="${item.weekdayMin||0}" placeholder="平日最低" class="w-20 text-center">
           <input type="number" value="${item.weekendMin||0}" placeholder="假日最低" class="w-20 text-center">
           <input type="text" value="${item.unit||''}" placeholder="單位" class="w-20 text-center">
+          <input type="text" value="${item.relatedItems?item.relatedItems.join(',') : ''}" placeholder="關聯食材 (逗號分隔)" class="flex-1">
         </div>
       `;
       const inputs = div.querySelectorAll('input');
@@ -139,6 +140,7 @@ function render(){
       inputs[1].oninput=e=>{ item.weekdayMin=parseFloat(e.target.value)||0; syncCloud(); };
       inputs[2].oninput=e=>{ item.weekendMin=parseFloat(e.target.value)||0; syncCloud(); };
       inputs[3].oninput=e=>{ item.unit=e.target.value; syncCloud(); };
+      inputs[4].oninput=e=>{ item.relatedItems = e.target.value.split(',').map(s=>s.trim()); syncCloud(); };
     }else{
       // 盤點區：只顯示 + / - 按鈕，不顯示旁邊數字
       div.innerHTML = `
