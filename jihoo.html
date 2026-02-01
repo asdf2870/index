@@ -33,7 +33,7 @@ const db = firebase.database();
 /* ========= 狀態 ========= */
 let merchants = [];
 let currentMerchant = '';
-let page = 'inventory'; // inventory | manage
+let page = 'inventory';
 let dayType = 'weekday';
 let items = [];
 let stockCounts = {};
@@ -45,17 +45,17 @@ function render(){
   root.innerHTML = '';
   const wrap = document.createElement('div');
 
-  /* 商家切換 */
+  /* 商家切換 + 管理 */
   wrap.innerHTML += `
     <div class="flex gap-2 mb-3">
       <select id="merchantSel" class="flex-1 border rounded px-2 py-1">
         ${merchants.map(m=>`<option ${m===currentMerchant?'selected':''}>${m}</option>`).join('')}
       </select>
-      <button id="merchantMgr" class="px-2 bg-slate-500 text-white rounded">商家</button>
+      <button id="merchantManage" class="px-2 bg-slate-600 text-white rounded">管理</button>
     </div>
   `;
 
-  /* Header + 清除盤點 */
+  /* Header */
   wrap.innerHTML += `
     <div class="flex justify-between items-center mb-3 gap-2">
       <h1 class="font-bold text-lg flex-1">盤點叫貨系統</h1>
@@ -96,8 +96,7 @@ function render(){
       `;
       row.querySelector('input').oninput=e=>{
         stockCounts[it.id]=parseFloat(e.target.value)||0;
-        sync();
-        render();
+        sync(); render();
       };
       list.appendChild(row);
     });
@@ -141,50 +140,20 @@ function render(){
 
   wrap.appendChild(list);
 
-  /* 補貨清單 */
-  if(page==='inventory'){
-    const order = items.map(it=>{
-      const min = dayType==='weekday'?it.weekdayMin:it.weekendMin;
-      const need = (min||0)-(stockCounts[it.id]||0);
-      if(need>0){
-        return it.relatedItems?.length ? it.relatedItems.join(', ') : `${it.name} +${need}${it.unit||''}`;
-      }
-      return null;
-    }).filter(Boolean);
-
-    wrap.innerHTML += `
-      <div class="mt-4 bg-white p-2 rounded shadow">
-        <div class="font-bold mb-1">補貨清單</div>
-        ${order.length?order.join('，'):'目前無需補貨'}
-        ${order.length?'<button id="copy" class="mt-2 w-full bg-blue-600 text-white py-1 rounded">一鍵複製</button>':''}
-      </div>
-    `;
-    setTimeout(()=>{
-      if(document.getElementById('copy')){
-        document.getElementById('copy').onclick=()=>{
-          navigator.clipboard.writeText(order.join('\n'));
-          alert('已複製');
-        };
-      }
-    });
-  }
-
   root.appendChild(wrap);
 
-  /* Events */
+  /* ===== Events ===== */
   document.getElementById('merchantSel').onchange=e=>{
     currentMerchant=e.target.value; load();
   };
-  document.getElementById('merchantMgr').onclick=manageMerchant;
+  document.getElementById('merchantManage').onclick=merchantManager;
   document.getElementById('togglePage').onclick=()=>{
     page=page==='inventory'?'manage':'inventory'; render();
   };
   if(document.getElementById('clearStock')){
     document.getElementById('clearStock').onclick=()=>{
-      if(confirm('確定要清除所有盤點數值？')){
-        stockCounts = {};
-        sync();
-        render();
+      if(confirm('確定清除所有盤點？')){
+        stockCounts={}; sync(); render();
       }
     };
   }
@@ -192,18 +161,52 @@ function render(){
   if(document.getElementById('we')) document.getElementById('we').onclick=()=>{dayType='weekend';render();};
 }
 
-/* ========= 功能 ========= */
+/* ========= 商家管理（新增 / 改名 / 刪除） ========= */
+function merchantManager(){
+  const name = prompt(`目前商家：\n${merchants.join('\n')}\n\n輸入：\n新增:商家名\n修改:舊名>新名\n刪除:商家名`);
+  if(!name) return;
+
+  if(name.startsWith('新增:')){
+    const n=name.replace('新增:','');
+    if(n && !merchants.includes(n)){
+      merchants.push(n);
+      currentMerchant=n;
+    }
+  }
+  if(name.startsWith('修改:')){
+    const [oldN,newN]=name.replace('修改:','').split('>');
+    if(merchants.includes(oldN) && newN){
+      merchants=merchants.map(m=>m===oldN?newN:m);
+      db.ref('inventory_tool/'+newN).set(
+        JSON.parse(JSON.stringify(
+          db.ref('inventory_tool/'+oldN)
+        ))
+      );
+      if(currentMerchant===oldN) currentMerchant=newN;
+    }
+  }
+  if(name.startsWith('刪除:')){
+    const n=name.replace('刪除:','');
+    if(merchants.includes(n) && confirm(`確定刪除 ${n}？`)){
+      merchants=merchants.filter(m=>m!==n);
+      db.ref('inventory_tool/'+n).remove();
+      if(currentMerchant===n) currentMerchant=merchants[0]||'';
+    }
+  }
+  render(); load();
+}
+
+/* ========= 共用 ========= */
 function adj(id,d){
   stockCounts[id]=(stockCounts[id]||0)+d;
   if(stockCounts[id]<0) stockCounts[id]=0;
   sync(); render();
 }
-
 function sync(){
-  if(!currentMerchant) return;
-  db.ref('inventory_tool/'+currentMerchant).set({items,stockCounts});
+  if(currentMerchant){
+    db.ref('inventory_tool/'+currentMerchant).set({items,stockCounts});
+  }
 }
-
 function load(){
   if(!currentMerchant) return;
   db.ref('inventory_tool/'+currentMerchant).once('value').then(s=>{
@@ -214,24 +217,10 @@ function load(){
   });
 }
 
-function manageMerchant(){
-  const cmd=prompt('新增:商家名 或 刪除:商家名');
-  if(!cmd) return;
-  const [c,n]=cmd.split(':');
-  if(c==='新增' && n && !merchants.includes(n)){
-    merchants.push(n); currentMerchant=n;
-  }
-  if(c==='刪除' && merchants.includes(n)){
-    merchants=merchants.filter(m=>m!==n);
-    if(currentMerchant===n) currentMerchant=merchants[0]||'';
-  }
-  render(); load();
-}
-
 /* ========= Init ========= */
 db.ref('inventory_tool').once('value').then(s=>{
-  merchants = s.exists()?Object.keys(s.val()):['預設商家'];
-  currentMerchant = merchants[0];
+  merchants=s.exists()?Object.keys(s.val()):['預設商家'];
+  currentMerchant=merchants[0];
   load();
 });
 </script>
