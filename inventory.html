@@ -25,8 +25,6 @@
             -webkit-appearance: none;
             margin: 0;
         }
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
         .lucide-icon { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; }
         .btn-press:active { transform: scale(0.9); transition: 0.1s; }
     </style>
@@ -75,6 +73,7 @@
             const [loading, setLoading] = useState(true);
             const [showCopySuccess, setShowCopySuccess] = useState(false);
             const [showMerchantManager, setShowMerchantManager] = useState(false);
+            const [expandedRecipeId, setExpandedRecipeId] = useState(null);
 
             useEffect(() => {
                 const merchantsRef = db.ref('inventory_tool_v3/merchants');
@@ -137,6 +136,8 @@
                 items.forEach(item => {
                     const needAmount = calculateNeed(item, stockCounts[item.id]);
                     if (needAmount <= 0) return;
+                    
+                    // 如果有配方 (BOM)
                     if (item.recipe && item.recipe.length > 0) {
                         item.recipe.forEach(r => {
                             if (!r.name) return;
@@ -252,7 +253,6 @@
                                 ) : (
                                     items.map(item => (
                                         <div key={item.id} className="flex items-center gap-2 py-3 px-1">
-                                            {/* 名稱與灰色標配量 */}
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-1.5">
                                                     <span className="font-bold text-sm text-slate-800 truncate">{item.name || '未命名'}</span>
@@ -261,9 +261,8 @@
                                                 <div className="text-[10px] text-slate-400 font-medium">需庫存: {dayType === 'weekday' ? item.weekdayMin : item.weekendMin} {item.unit}</div>
                                             </div>
 
-                                            {/* 操作區：- | 輸入框 | + | 單位 */}
                                             <div className="flex items-center gap-1 shrink-0">
-                                                <button onClick={() => adjustCount(item.id, -0.5)} className="w-8 h-8 flex items-center justify-center bg-slate-50 border border-slate-200 rounded-lg text-slate-400 font-black btn-press text-lg">
+                                                <button onClick={() => adjustCount(item.id, -0.5)} className="w-8 h-8 flex items-center justify-center bg-slate-50 border border-slate-200 rounded-lg text-slate-400 font-black btn-press">
                                                     <Icon name="minus" size={14} />
                                                 </button>
                                                 <div className="w-14">
@@ -279,11 +278,9 @@
                                                         className="w-full bg-white border border-slate-200 rounded-lg py-1.5 text-center text-sm font-black focus:border-blue-500 outline-none shadow-inner"
                                                     />
                                                 </div>
-                                                <button onClick={() => adjustCount(item.id, 0.5)} className="w-8 h-8 flex items-center justify-center bg-white border border-slate-200 rounded-lg text-blue-600 font-black btn-press text-lg">
+                                                <button onClick={() => adjustCount(item.id, 0.5)} className="w-8 h-8 flex items-center justify-center bg-white border border-slate-200 rounded-lg text-blue-600 font-black btn-press">
                                                     <Icon name="plus" size={14} />
                                                 </button>
-                                                
-                                                {/* 單位顯示 */}
                                                 <div className="w-10 text-[11px] text-slate-400 font-bold pl-1 truncate">
                                                     {item.unit}
                                                 </div>
@@ -295,7 +292,7 @@
                         ) : (
                             <div className="space-y-3 pb-24 px-1 pt-2">
                                 {items.map(item => (
-                                    <div key={item.id} className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                                    <div key={item.id} className="p-3 bg-white border border-slate-200 rounded-xl space-y-3">
                                         <div className="flex gap-2">
                                             <input 
                                                 value={item.name} onChange={(e) => {
@@ -324,6 +321,7 @@
                                                 }
                                             }} className="text-slate-300 hover:text-red-500"><Icon name="trash-2" size={14}/></button>
                                         </div>
+                                        
                                         <div className="grid grid-cols-2 gap-2">
                                             <div className="bg-blue-50 px-2 py-1 rounded">
                                                 <span className="text-[9px] text-blue-500 font-bold block">平日標配</span>
@@ -341,6 +339,72 @@
                                                     syncData(updatedItems, stockCounts);
                                                 }} className="w-full bg-transparent font-bold text-orange-900 outline-none text-xs" />
                                             </div>
+                                        </div>
+
+                                        {/* BOM 編輯區 */}
+                                        <div className="border-t border-slate-50 pt-2">
+                                            <button 
+                                                onClick={() => setExpandedRecipeId(expandedRecipeId === item.id ? null : item.id)}
+                                                className="flex items-center gap-1 text-[11px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded"
+                                            >
+                                                <Icon name="flask-conical" size={12} />
+                                                <span>配方管理 ({item.recipe?.length || 0})</span>
+                                                <Icon name="chevron-down" size={10} className={expandedRecipeId === item.id ? "rotate-180" : ""} />
+                                            </button>
+
+                                            {expandedRecipeId === item.id && (
+                                                <div className="mt-2 space-y-2 bg-slate-50 p-2 rounded-lg">
+                                                    {item.recipe?.map((r, rIndex) => (
+                                                        <div key={rIndex} className="flex gap-1 items-center bg-white p-1.5 rounded border border-slate-100">
+                                                            <input 
+                                                                placeholder="物料名" value={r.name} 
+                                                                onChange={(e) => {
+                                                                    const newRecipe = [...(item.recipe || [])];
+                                                                    newRecipe[rIndex].name = e.target.value;
+                                                                    const updatedItems = items.map(i => i.id === item.id ? { ...i, recipe: newRecipe } : i);
+                                                                    setItems(updatedItems);
+                                                                    syncData(updatedItems, stockCounts);
+                                                                }}
+                                                                className="flex-1 text-xs outline-none font-bold"
+                                                            />
+                                                            <input 
+                                                                type="number" placeholder="量" value={r.amount} 
+                                                                onChange={(e) => {
+                                                                    const newRecipe = [...(item.recipe || [])];
+                                                                    newRecipe[rIndex].amount = parseFloat(e.target.value) || 0;
+                                                                    const updatedItems = items.map(i => i.id === item.id ? { ...i, recipe: newRecipe } : i);
+                                                                    setItems(updatedItems);
+                                                                    syncData(updatedItems, stockCounts);
+                                                                }}
+                                                                className="w-10 text-xs text-center border-x border-slate-50 outline-none"
+                                                            />
+                                                            <input 
+                                                                placeholder="單位" value={r.unit} 
+                                                                onChange={(e) => {
+                                                                    const newRecipe = [...(item.recipe || [])];
+                                                                    newRecipe[rIndex].unit = e.target.value;
+                                                                    const updatedItems = items.map(i => i.id === item.id ? { ...i, recipe: newRecipe } : i);
+                                                                    setItems(updatedItems);
+                                                                    syncData(updatedItems, stockCounts);
+                                                                }}
+                                                                className="w-10 text-xs text-center outline-none text-slate-400"
+                                                            />
+                                                            <button onClick={() => {
+                                                                const newRecipe = item.recipe.filter((_, i) => i !== rIndex);
+                                                                const updatedItems = items.map(i => i.id === item.id ? { ...i, recipe: newRecipe } : i);
+                                                                setItems(updatedItems);
+                                                                syncData(updatedItems, stockCounts);
+                                                            }} className="text-slate-300"><Icon name="x" size={12}/></button>
+                                                        </div>
+                                                    ))}
+                                                    <button onClick={() => {
+                                                        const newRecipe = [...(item.recipe || []), { name: '', amount: 1, unit: '' }];
+                                                        const updatedItems = items.map(i => i.id === item.id ? { ...i, recipe: newRecipe } : i);
+                                                        setItems(updatedItems);
+                                                        syncData(updatedItems, stockCounts);
+                                                    }} className="w-full py-1.5 border border-dashed border-slate-300 rounded text-[10px] text-slate-400 font-bold">+ 新增配方內容</button>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 ))}
