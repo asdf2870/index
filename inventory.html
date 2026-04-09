@@ -233,34 +233,73 @@
                             </button>
                         </div>
 
-                        {showMerchantManager && (
-                            <div className="absolute top-14 left-3 right-3 bg-white rounded-xl shadow-2xl border border-slate-200 text-slate-800 overflow-hidden z-50">
-                                <div className="p-2 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                                    <span className="text-[10px] font-black text-slate-400 px-2">切換商家</span>
-                                    <button onClick={() => {
-                                        const name = window.prompt('請輸入商家名稱');
-                                        if (name) {
-                                            const id = 'm-' + Date.now();
-                                            db.ref(`inventory_tool_v3/merchants/${id}`).set({ id, name });
-                                            setCurrentMerchantId(id);
-                                            setShowMerchantManager(false);
-                                        }
-                                    }} className="bg-blue-600 text-white px-3 py-1 rounded text-[10px] font-black">新增</button>
-                                </div>
-                                <div className="max-h-60 overflow-y-auto">
-                                    {merchants.map(m => (
-                                        <div key={m.id} className="flex items-center group hover:bg-slate-50 border-b border-slate-50">
-                                            <button 
-                                                onClick={() => { setCurrentMerchantId(m.id); setShowMerchantManager(false); }}
-                                                className={`flex-1 text-left px-4 py-3 text-sm font-bold ${currentMerchantId === m.id ? 'text-blue-600' : ''}`}
-                                            >
-                                                {m.name}
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+{showMerchantManager && (
+    <div className="absolute top-14 left-3 right-3 bg-white rounded-xl shadow-2xl border border-slate-200 text-slate-800 overflow-hidden z-50">
+        <div className="p-2 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+            <span className="text-[10px] font-black text-slate-400 px-2">商家管理</span>
+            <button onClick={() => {
+                const name = window.prompt('請輸入新商家名稱');
+                if (name) {
+                    const id = 'm-' + Date.now();
+                    db.ref(`inventory_tool_v3/merchants/${id}`).set({ id, name });
+                    setCurrentMerchantId(id);
+                    setShowMerchantManager(false);
+                }
+            }} className="bg-blue-600 text-white px-3 py-1 rounded text-[10px] font-black">+ 新增商家</button>
+        </div>
+        <div className="max-h-60 overflow-y-auto">
+            {merchants.map(m => (
+                <div key={m.id} className="flex items-center group hover:bg-slate-50 border-b border-slate-50 px-2">
+                    {/* 切換商家按鈕 */}
+                    <button 
+                        onClick={() => { setCurrentMerchantId(m.id); setShowMerchantManager(false); }}
+                        className={`flex-1 text-left px-2 py-3 text-sm font-bold truncate ${currentMerchantId === m.id ? 'text-blue-600' : ''}`}
+                    >
+                        {m.name}
+                    </button>
+                    
+                    <div className="flex gap-2 shrink-0">
+                        {/* 修改名稱按鈕 */}
+                        <button 
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                const newName = window.prompt('請輸入新的商家名稱', m.name);
+                                if (newName && newName !== m.name) {
+                                    db.ref(`inventory_tool_v3/merchants/${m.id}`).update({ name: newName });
+                                }
+                            }}
+                            className="p-2 text-slate-400 hover:text-blue-500"
+                        >
+                            <Icon name="pencil" size={14} />
+                        </button>
+
+                        {/* 刪除商家按鈕 */}
+                        <button 
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm(`確定要刪除「${m.name}」嗎？\n這將無法復原。`)) {
+                                    // 1. 刪除商家清單中的資訊
+                                    db.ref(`inventory_tool_v3/merchants/${m.id}`).remove();
+                                    // 2. 刪除該商家的所有品項與庫存資料
+                                    db.ref(`inventory_tool_v3/data/${m.id}`).remove();
+                                    
+                                    // 如果刪除的是當前選中的，自動切換到下一個
+                                    if (currentMerchantId === m.id) {
+                                        const remaining = merchants.filter(mer => mer.id !== m.id);
+                                        setCurrentMerchantId(remaining.length > 0 ? remaining[0].id : null);
+                                    }
+                                }
+                            }}
+                            className="p-2 text-slate-300 hover:text-red-500"
+                        >
+                            <Icon name="trash-2" size={14} />
+                        </button>
+                    </div>
+                </div>
+            ))}
+        </div>
+    </div>
+)}
 
                         <div className="flex bg-slate-800 p-1 rounded-lg gap-1">
                             <button onClick={() => setDayType('weekday')} className={`flex-1 py-1.5 rounded-md text-[11px] font-black transition-all ${dayType === 'weekday' ? 'bg-slate-700 text-blue-400' : 'text-slate-500'}`}>平日標準</button>
